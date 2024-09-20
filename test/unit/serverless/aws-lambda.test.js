@@ -1,36 +1,29 @@
 /*
- * Copyright 2024 New Relic Corporation. All rights reserved.
+ * Copyright 2020 New Relic Corporation. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
-const os = require('node:os')
+const tap = require('tap')
 
-const { tspl } = require('@matteo.collina/tspl')
+const os = require('os')
 const helper = require('../../lib/agent_helper')
-const tempRemoveListeners = require('../../lib/temp-remove-listeners')
-const tempOverrideUncaught = require('../../lib/temp-override-uncaught')
 const AwsLambda = require('../../../lib/serverless/aws-lambda')
 const lambdaSampleEvents = require('./lambda-sample-events')
 
-const { DESTINATIONS: ATTR_DEST } = require('../../../lib/config/attribute-filter')
+const ATTR_DEST = require('../../../lib/config/attribute-filter').DESTINATIONS
 const symbols = require('../../../lib/symbols')
-
-// Attribute key names:
+// attribute key names
 const REQ_ID = 'aws.requestId'
 const LAMBDA_ARN = 'aws.lambda.arn'
 const COLDSTART = 'aws.lambda.coldStart'
 const EVENTSOURCE_ARN = 'aws.lambda.eventSource.arn'
 const EVENTSOURCE_TYPE = 'aws.lambda.eventSource.eventType'
 
-function getMetrics(agent) {
-  return agent.metrics._metrics
-}
+tap.test('AwsLambda.patchLambdaHandler', (t) => {
+  t.autoend()
 
-test('AwsLambda.patchLambdaHandler', async (t) => {
   const groupName = 'Function'
   const functionName = 'testName'
   const expectedTransactionName = groupName + '/' + functionName
@@ -38,66 +31,89 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
   const expectedWebTransactionName = 'WebTransaction/' + expectedTransactionName
   const errorMessage = 'sad day'
 
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
-      allow_all_headers: true,
-      attributes: {
-        exclude: ['request.headers.x*', 'response.headers.x*']
-      },
-      serverless_mode: { enabled: true }
-    })
+  let agent
+  let awsLambda
 
+  let stubEvent
+  let stubContext
+  let stubCallback
+
+  let error
+
+  t.beforeEach(() => {
+    if (!agent) {
+      agent = helper.loadMockedAgent({
+        allow_all_headers: true,
+        attributes: {
+          exclude: ['request.headers.x*', 'response.headers.x*']
+        },
+        serverless_mode: {
+          enabled: true
+        }
+      })
+    }
     process.env.NEWRELIC_PIPE_PATH = os.devNull
-    const awsLambda = new AwsLambda(ctx.nr.agent)
-    ctx.nr.awsLambda = awsLambda
+    awsLambda = new AwsLambda(agent)
     awsLambda._resetModuleState()
 
-    ctx.nr.stubEvent = {}
-    ctx.nr.stubContext = {
-      done() {},
-      succeed() {},
-      fail() {},
+    stubEvent = {}
+    ;(stubContext = {
+      done: () => {},
+      succeed: () => {},
+      fail: () => {},
       functionName: functionName,
       functionVersion: 'TestVersion',
       invokedFunctionArn: 'arn:test:function',
       memoryLimitInMB: '128',
       awsRequestId: 'testid'
-    }
-    ctx.nr.stubCallback = () => {}
+    }),
+      (stubCallback = () => {})
 
     process.env.AWS_EXECUTION_ENV = 'Test_nodejsNegative2.3'
 
-    ctx.nr.error = new SyntaxError(errorMessage)
+    error = new SyntaxError(errorMessage)
 
-    ctx.nr.agent.setState('started')
+    agent.setState('started')
   })
 
-  t.afterEach((ctx) => {
+  t.afterEach(() => {
+    stubEvent = null
+    stubContext = null
+    stubCallback = null
+    error = null
+
     delete process.env.AWS_EXECUTION_ENV
-    helper.unloadAgent(ctx.nr.agent)
+
+    if (agent) {
+      helper.unloadAgent(agent)
+    }
 
     if (process.emit && process.emit[symbols.unwrap]) {
       process.emit[symbols.unwrap]()
     }
+
+    agent = null
+    awsLambda = null
   })
 
-  await t.test('should return original handler if not a function', (t) => {
+  t.test('should return original handler if not a function', (t) => {
     const handler = {}
-    const newHandler = t.nr.awsLambda.patchLambdaHandler(handler)
+    const newHandler = awsLambda.patchLambdaHandler(handler)
 
-    assert.equal(newHandler, handler)
+    t.equal(newHandler, handler)
+    t.end()
   })
 
-  await t.test('should pick up on the arn', function (t) {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
-    assert.equal(agent.collector.metadata.arn, null)
+  t.test('should pick up on the arn', function (t) {
+    t.equal(agent.collector.metadata.arn, null)
     awsLambda.patchLambdaHandler(() => {})(stubEvent, stubContext, stubCallback)
-    assert.equal(agent.collector.metadata.arn, stubContext.invokedFunctionArn)
+    t.equal(agent.collector.metadata.arn, stubContext.invokedFunctionArn)
+    t.end()
   })
 
-  await t.test('when invoked with API Gateway Lambda proxy event', async (t) => {
-    helper.unloadAgent(t.nr.agent)
+  t.test('when invoked with API Gateway Lambda proxy event', (t) => {
+    t.autoend()
+
     const validResponse = {
       isBase64Encoded: false,
       statusCode: 200,
@@ -105,8 +121,7 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       body: 'worked'
     }
 
-    await t.test('should create web transaction', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should create web transaction', async (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -114,10 +129,10 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
         const transaction = agent.tracer.getTransaction()
 
-        assert.ok(transaction)
-        assert.equal(transaction.type, 'web')
-        assert.equal(transaction.getFullName(), expectedWebTransactionName)
-        assert.equal(transaction.isActive(), true)
+        t.ok(transaction)
+        t.equal(transaction.type, 'web')
+        t.equal(transaction.getFullName(), expectedWebTransactionName)
+        t.equal(transaction.isActive(), true)
 
         callback(null, validResponse)
       })
@@ -129,88 +144,79 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const segment = transaction.baseSegment
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-        assert.equal(agentAttributes['request.method'], 'GET')
-        assert.equal(agentAttributes['request.uri'], '/test/hello')
+        t.equal(agentAttributes['request.method'], 'GET')
+        t.equal(agentAttributes['request.uri'], '/test/hello')
 
-        assert.equal(spanAttributes['request.method'], 'GET')
-        assert.equal(spanAttributes['request.uri'], '/test/hello')
+        t.equal(spanAttributes['request.method'], 'GET')
+        t.equal(spanAttributes['request.uri'], '/test/hello')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test(
-      'should set w3c tracecontext on transaction if present on request header',
-      (t, end) => {
-        const { agent, awsLambda, stubContext, stubCallback } = t.nr
-        const expectedTraceId = '4bf92f3577b34da6a3ce929d0e0e4736'
-        const traceparent = `00-${expectedTraceId}-00f067aa0ba902b7-00`
+    t.test('should set w3c tracecontext on transaction if present on request header', (t) => {
+      const expectedTraceId = '4bf92f3577b34da6a3ce929d0e0e4736'
+      const traceparent = `00-${expectedTraceId}-00f067aa0ba902b7-00`
 
-        // transaction finished event passes back transaction,
-        // so can't pass `done` in or will look like errored.
-        agent.on('transactionFinished', () => {
-          end()
-        })
+      // transaction finished event passes back transaction,
+      // so can't pass `done` in or will look like errored.
+      agent.on('transactionFinished', () => {
+        t.end()
+      })
 
-        agent.config.distributed_tracing.enabled = true
+      agent.config.distributed_tracing.enabled = true
 
-        const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
-        apiGatewayProxyEvent.headers.traceparent = traceparent
+      const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
+      apiGatewayProxyEvent.headers.traceparent = traceparent
 
-        const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
-          const transaction = agent.tracer.getTransaction()
+      const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
+        const transaction = agent.tracer.getTransaction()
 
-          const headers = {}
-          transaction.insertDistributedTraceHeaders(headers)
+        const headers = {}
+        transaction.insertDistributedTraceHeaders(headers)
 
-          const traceParentFields = headers.traceparent.split('-')
-          const [version, traceId] = traceParentFields
+        const traceParentFields = headers.traceparent.split('-')
+        const [version, traceId] = traceParentFields
 
-          assert.equal(version, '00')
-          assert.equal(traceId, expectedTraceId)
+        t.equal(version, '00')
+        t.equal(traceId, expectedTraceId)
 
-          callback(null, validResponse)
-        })
+        callback(null, validResponse)
+      })
 
-        wrappedHandler(apiGatewayProxyEvent, stubContext, stubCallback)
-      }
-    )
+      wrappedHandler(apiGatewayProxyEvent, stubContext, stubCallback)
+    })
 
-    await t.test(
-      'should add w3c tracecontext to transaction if not present on request header',
-      (t, end) => {
-        const { agent, awsLambda, stubContext, stubCallback } = t.nr
-        // transaction finished event passes back transaction,
-        // so can't pass `done` in or will look like errored.
-        agent.on('transactionFinished', () => {
-          end()
-        })
+    t.test('should add w3c tracecontext to transaction if not present on request header', (t) => {
+      // transaction finished event passes back transaction,
+      // so can't pass `done` in or will look like errored.
+      agent.on('transactionFinished', () => {
+        t.end()
+      })
 
-        agent.config.account_id = 'AccountId1'
-        agent.config.primary_application_id = 'AppId1'
-        agent.config.trusted_account_key = 33
-        agent.config.distributed_tracing.enabled = true
+      agent.config.account_id = 'AccountId1'
+      agent.config.primary_application_id = 'AppId1'
+      agent.config.trusted_account_key = 33
+      agent.config.distributed_tracing.enabled = true
 
-        const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
+      const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
 
-        const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
-          const transaction = agent.tracer.getTransaction()
+      const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
+        const transaction = agent.tracer.getTransaction()
 
-          const headers = {}
-          transaction.insertDistributedTraceHeaders(headers)
+        const headers = {}
+        transaction.insertDistributedTraceHeaders(headers)
 
-          assert.ok(headers.traceparent)
-          assert.ok(headers.tracestate)
+        t.ok(headers.traceparent)
+        t.ok(headers.tracestate)
 
-          callback(null, validResponse)
-        })
+        callback(null, validResponse)
+      })
 
-        wrappedHandler(apiGatewayProxyEvent, stubContext, stubCallback)
-      }
-    )
+      wrappedHandler(apiGatewayProxyEvent, stubContext, stubCallback)
+    })
 
-    await t.test('should capture request parameters', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture request parameters', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       agent.config.attributes.enabled = true
@@ -228,15 +234,14 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal(agentAttributes['request.parameters.name'], 'me')
-        assert.equal(agentAttributes['request.parameters.team'], 'node agent')
+        t.equal(agentAttributes['request.parameters.name'], 'me')
+        t.equal(agentAttributes['request.parameters.team'], 'node agent')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should capture request parameters in Span Attributes', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture request parameters in Span Attributes', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       agent.config.attributes.enabled = true
@@ -255,15 +260,14 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const segment = transaction.baseSegment
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-        assert.equal(spanAttributes['request.parameters.name'], 'me')
-        assert.equal(spanAttributes['request.parameters.team'], 'node agent')
+        t.equal(spanAttributes['request.parameters.name'], 'me')
+        t.equal(spanAttributes['request.parameters.team'], 'node agent')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should capture request headers', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture request headers', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -277,41 +281,37 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal(
+        t.equal(
           agentAttributes['request.headers.accept'],
           'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
         )
-        assert.equal(
-          agentAttributes['request.headers.acceptEncoding'],
-          'gzip, deflate, lzma, sdch, br'
-        )
-        assert.equal(agentAttributes['request.headers.acceptLanguage'], 'en-US,en;q=0.8')
-        assert.equal(agentAttributes['request.headers.cloudFrontForwardedProto'], 'https')
-        assert.equal(agentAttributes['request.headers.cloudFrontIsDesktopViewer'], 'true')
-        assert.equal(agentAttributes['request.headers.cloudFrontIsMobileViewer'], 'false')
-        assert.equal(agentAttributes['request.headers.cloudFrontIsSmartTVViewer'], 'false')
-        assert.equal(agentAttributes['request.headers.cloudFrontIsTabletViewer'], 'false')
-        assert.equal(agentAttributes['request.headers.cloudFrontViewerCountry'], 'US')
-        assert.equal(
+        t.equal(agentAttributes['request.headers.acceptEncoding'], 'gzip, deflate, lzma, sdch, br')
+        t.equal(agentAttributes['request.headers.acceptLanguage'], 'en-US,en;q=0.8')
+        t.equal(agentAttributes['request.headers.cloudFrontForwardedProto'], 'https')
+        t.equal(agentAttributes['request.headers.cloudFrontIsDesktopViewer'], 'true')
+        t.equal(agentAttributes['request.headers.cloudFrontIsMobileViewer'], 'false')
+        t.equal(agentAttributes['request.headers.cloudFrontIsSmartTVViewer'], 'false')
+        t.equal(agentAttributes['request.headers.cloudFrontIsTabletViewer'], 'false')
+        t.equal(agentAttributes['request.headers.cloudFrontViewerCountry'], 'US')
+        t.equal(
           agentAttributes['request.headers.host'],
           'wt6mne2s9k.execute-api.us-west-2.amazonaws.com'
         )
-        assert.equal(agentAttributes['request.headers.upgradeInsecureRequests'], '1')
-        assert.equal(
+        t.equal(agentAttributes['request.headers.upgradeInsecureRequests'], '1')
+        t.equal(
           agentAttributes['request.headers.userAgent'],
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6)'
         )
-        assert.equal(
+        t.equal(
           agentAttributes['request.headers.via'],
           '1.1 fb7cca60f0ecd82ce07790c9c5eef16c.cloudfront.net (CloudFront)'
         )
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should filter request headers by `exclude` rules', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should filter request headers by `exclude` rules', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -325,27 +325,26 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal('request.headers.X-Amz-Cf-Id' in agentAttributes, false)
-        assert.equal('request.headers.X-Forwarded-For' in agentAttributes, false)
-        assert.equal('request.headers.X-Forwarded-Port' in agentAttributes, false)
-        assert.equal('request.headers.X-Forwarded-Proto' in agentAttributes, false)
+        t.notOk('request.headers.X-Amz-Cf-Id' in agentAttributes)
+        t.notOk('request.headers.X-Forwarded-For' in agentAttributes)
+        t.notOk('request.headers.X-Forwarded-Port' in agentAttributes)
+        t.notOk('request.headers.X-Forwarded-Proto' in agentAttributes)
 
-        assert.equal('request.headers.xAmzCfId' in agentAttributes, false)
-        assert.equal('request.headers.xForwardedFor' in agentAttributes, false)
-        assert.equal('request.headers.xForwardedPort' in agentAttributes, false)
-        assert.equal('request.headers.xForwardedProto' in agentAttributes, false)
+        t.notOk('request.headers.xAmzCfId' in agentAttributes)
+        t.notOk('request.headers.xForwardedFor' in agentAttributes)
+        t.notOk('request.headers.xForwardedPort' in agentAttributes)
+        t.notOk('request.headers.xForwardedProto' in agentAttributes)
 
-        assert.equal('request.headers.XAmzCfId' in agentAttributes, false)
-        assert.equal('request.headers.XForwardedFor' in agentAttributes, false)
-        assert.equal('request.headers.XForwardedPort' in agentAttributes, false)
-        assert.equal('request.headers.XForwardedProto' in agentAttributes, false)
+        t.notOk('request.headers.XAmzCfId' in agentAttributes)
+        t.notOk('request.headers.XForwardedFor' in agentAttributes)
+        t.notOk('request.headers.XForwardedPort' in agentAttributes)
+        t.notOk('request.headers.XForwardedProto' in agentAttributes)
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should capture status code', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture status code', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -361,15 +360,15 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const segment = transaction.agent.tracer.getSegment()
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-        assert.equal(agentAttributes['http.statusCode'], '200')
-        assert.equal(spanAttributes['http.statusCode'], '200')
+        t.equal(agentAttributes['http.statusCode'], '200')
 
-        end()
+        t.equal(spanAttributes['http.statusCode'], '200')
+
+        t.end()
       }
     })
 
-    await t.test('should capture response status code in async lambda', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture response status code in async lambda', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -393,15 +392,15 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const segment = transaction.baseSegment
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-        assert.equal(agentAttributes['http.statusCode'], '200')
-        assert.equal(spanAttributes['http.statusCode'], '200')
+        t.equal(agentAttributes['http.statusCode'], '200')
 
-        end()
+        t.equal(spanAttributes['http.statusCode'], '200')
+
+        t.end()
       }
     })
 
-    await t.test('should capture response headers', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should capture response headers', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -415,14 +414,13 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal(agentAttributes['response.headers.responseHeader'], 'headerValue')
+        t.equal(agentAttributes['response.headers.responseHeader'], 'headerValue')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should work when responding without headers', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should work when responding without headers', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -440,14 +438,13 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal(agentAttributes['http.statusCode'], '200')
+        t.equal(agentAttributes['http.statusCode'], '200')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should detect event type', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should detect event type', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -461,14 +458,13 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       function confirmAgentAttribute(transaction) {
         const agentAttributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
 
-        assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'apiGateway')
+        t.equal(agentAttributes[EVENTSOURCE_TYPE], 'apiGateway')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should collect event source meta data', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should collect event source meta data', (t) => {
       agent.on('transactionFinished', confirmAgentAttribute)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -484,24 +480,23 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const segment = transaction.agent.tracer.getSegment()
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-        assert.equal(agentAttributes['aws.lambda.eventSource.accountId'], '123456789012')
-        assert.equal(agentAttributes['aws.lambda.eventSource.apiId'], 'wt6mne2s9k')
-        assert.equal(agentAttributes['aws.lambda.eventSource.resourceId'], 'us4z18')
-        assert.equal(agentAttributes['aws.lambda.eventSource.resourcePath'], '/{proxy+}')
-        assert.equal(agentAttributes['aws.lambda.eventSource.stage'], 'test')
+        t.equal(agentAttributes['aws.lambda.eventSource.accountId'], '123456789012')
+        t.equal(agentAttributes['aws.lambda.eventSource.apiId'], 'wt6mne2s9k')
+        t.equal(agentAttributes['aws.lambda.eventSource.resourceId'], 'us4z18')
+        t.equal(agentAttributes['aws.lambda.eventSource.resourcePath'], '/{proxy+}')
+        t.equal(agentAttributes['aws.lambda.eventSource.stage'], 'test')
 
-        assert.equal(spanAttributes['aws.lambda.eventSource.accountId'], '123456789012')
-        assert.equal(spanAttributes['aws.lambda.eventSource.apiId'], 'wt6mne2s9k')
-        assert.equal(spanAttributes['aws.lambda.eventSource.resourceId'], 'us4z18')
-        assert.equal(spanAttributes['aws.lambda.eventSource.resourcePath'], '/{proxy+}')
-        assert.equal(spanAttributes['aws.lambda.eventSource.stage'], 'test')
+        t.equal(spanAttributes['aws.lambda.eventSource.accountId'], '123456789012')
+        t.equal(spanAttributes['aws.lambda.eventSource.apiId'], 'wt6mne2s9k')
+        t.equal(spanAttributes['aws.lambda.eventSource.resourceId'], 'us4z18')
+        t.equal(spanAttributes['aws.lambda.eventSource.resourcePath'], '/{proxy+}')
+        t.equal(spanAttributes['aws.lambda.eventSource.stage'], 'test')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should record standard web metrics', (t, end) => {
-      const { agent, awsLambda, stubContext, stubCallback } = t.nr
+    t.test('should record standard web metrics', (t) => {
       agent.on('harvestStarted', confirmMetrics)
 
       const apiGatewayProxyEvent = lambdaSampleEvents.apiGatewayProxyEvent
@@ -514,51 +509,51 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
       function confirmMetrics() {
         const unscopedMetrics = getMetrics(agent).unscoped
-        assert.ok(unscopedMetrics)
+        t.ok(unscopedMetrics)
 
-        assert.ok(unscopedMetrics.HttpDispatcher)
-        assert.equal(unscopedMetrics.HttpDispatcher.callCount, 1)
+        t.ok(unscopedMetrics.HttpDispatcher)
+        t.equal(unscopedMetrics.HttpDispatcher.callCount, 1)
 
-        assert.ok(unscopedMetrics.Apdex)
-        assert.equal(unscopedMetrics.Apdex.satisfying, 1)
+        t.ok(unscopedMetrics.Apdex)
+        t.equal(unscopedMetrics.Apdex.satisfying, 1)
 
         const transactionApdex = 'Apdex/' + expectedTransactionName
-        assert.ok(unscopedMetrics[transactionApdex])
-        assert.equal(unscopedMetrics[transactionApdex].satisfying, 1)
+        t.ok(unscopedMetrics[transactionApdex])
+        t.equal(unscopedMetrics[transactionApdex].satisfying, 1)
 
-        assert.ok(unscopedMetrics.WebTransaction)
-        assert.equal(unscopedMetrics.WebTransaction.callCount, 1)
+        t.ok(unscopedMetrics.WebTransaction)
+        t.equal(unscopedMetrics.WebTransaction.callCount, 1)
 
-        assert.ok(unscopedMetrics[expectedWebTransactionName])
-        assert.equal(unscopedMetrics[expectedWebTransactionName].callCount, 1)
+        t.ok(unscopedMetrics[expectedWebTransactionName])
+        t.equal(unscopedMetrics[expectedWebTransactionName].callCount, 1)
 
-        assert.ok(unscopedMetrics.WebTransactionTotalTime)
-        assert.equal(unscopedMetrics.WebTransactionTotalTime.callCount, 1)
+        t.ok(unscopedMetrics.WebTransactionTotalTime)
+        t.equal(unscopedMetrics.WebTransactionTotalTime.callCount, 1)
 
         const transactionWebTotalTime = 'WebTransactionTotalTime/' + expectedTransactionName
-        assert.ok(unscopedMetrics[transactionWebTotalTime])
-        assert.equal(unscopedMetrics[transactionWebTotalTime].callCount, 1)
+        t.ok(unscopedMetrics[transactionWebTotalTime])
+        t.equal(unscopedMetrics[transactionWebTotalTime].callCount, 1)
 
-        end()
+        t.end()
       }
     })
   })
 
-  await t.test('should create a segment for handler', (t, end) => {
-    const { awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should create a segment for handler', (t) => {
+    t.autoend()
+
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       const segment = awsLambda.shim.getSegment()
-      assert.notEqual(segment, null)
-      assert.equal(segment.name, functionName)
+      t.not(segment, null)
+      t.equal(segment.name, functionName)
 
-      end(callback(null, 'worked'))
+      callback(null, 'worked')
     })
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
   })
 
-  await t.test('should capture cold start boolean on first invocation', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should capture cold start boolean on first invocation', (t) => {
     agent.on('transactionFinished', confirmColdStart)
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -569,13 +564,12 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     function confirmColdStart(transaction) {
       const attributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
-      assert.equal(attributes['aws.lambda.coldStart'], true)
-      end()
+      t.equal(attributes['aws.lambda.coldStart'], true)
+      t.end()
     }
   })
 
-  await t.test('should not include cold start on subsequent invocations', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should not include cold start on subsequent invocations', (t) => {
     let transactionNum = 1
 
     agent.on('transactionFinished', confirmNoAdditionalColdStart)
@@ -586,7 +580,7 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
     wrappedHandler(stubEvent, stubContext, () => {
-      end()
+      t.end()
     })
 
     function confirmNoAdditionalColdStart(transaction) {
@@ -594,16 +588,15 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         const attributes = transaction.trace.attributes.get(ATTR_DEST.TRANS_EVENT)
         const segment = transaction.agent.tracer.getSegment()
         const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
-        assert.equal('aws.lambda.coldStart' in attributes, false)
-        assert.equal('aws.lambda.coldStart' in spanAttributes, false)
+        t.notOk('aws.lambda.coldStart' in attributes)
+        t.notOk('aws.lambda.coldStart' in spanAttributes)
       }
 
       transactionNum++
     }
   })
 
-  await t.test('should capture AWS agent attributes and send to correct dests', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture AWS agent attributes and send to correct dests', (t) => {
     agent.on('transactionFinished', confirmAgentAttributes)
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -621,11 +614,11 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const txTrace = _verifyDestinations(transaction)
 
       // now verify actual values
-      assert.equal(txTrace[REQ_ID], stubContext.awsRequestId)
-      assert.equal(txTrace[LAMBDA_ARN], stubContext.invokedFunctionArn)
-      assert.equal(txTrace[COLDSTART], true)
+      t.equal(txTrace[REQ_ID], stubContext.awsRequestId)
+      t.equal(txTrace[LAMBDA_ARN], stubContext.invokedFunctionArn)
+      t.equal(txTrace[COLDSTART], true)
 
-      end()
+      t.end()
     }
 
     function _verifyDestinations(tx) {
@@ -636,17 +629,16 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const all = [REQ_ID, LAMBDA_ARN, COLDSTART, EVENTSOURCE_ARN]
 
       all.forEach((key) => {
-        assert.notEqual(txTrace[key], undefined)
-        assert.notEqual(errEvent[key], undefined)
-        assert.notEqual(txEvent[key], undefined)
+        t.not(txTrace[key], undefined)
+        t.not(errEvent[key], undefined)
+        t.not(txEvent[key], undefined)
       })
 
       return txTrace
     }
   })
 
-  await t.test('should not add attributes from empty event', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should not add attributes from empty event', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -660,19 +652,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(EVENTSOURCE_ARN in agentAttributes, false)
-      assert.equal(EVENTSOURCE_TYPE in agentAttributes, false)
-      assert.equal(EVENTSOURCE_ARN in spanAttributes, false)
-      assert.equal(EVENTSOURCE_TYPE in spanAttributes, false)
-      end()
+      t.notOk(EVENTSOURCE_ARN in agentAttributes)
+      t.notOk(EVENTSOURCE_TYPE in agentAttributes)
+      t.notOk(EVENTSOURCE_ARN in spanAttributes)
+      t.notOk(EVENTSOURCE_TYPE in spanAttributes)
+      t.end()
     }
   })
 
-  await t.test('should capture kinesis data stream event source arn', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture kinesis data stream event source arn', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.kinesisDataStreamEvent
+    stubEvent = lambdaSampleEvents.kinesisDataStreamEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -685,19 +676,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], 'kinesis:eventsourcearn')
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], 'kinesis:eventsourcearn')
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'kinesis')
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'kinesis')
-      end()
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'kinesis:eventsourcearn')
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'kinesis:eventsourcearn')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'kinesis')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'kinesis')
+      t.end()
     }
   })
 
-  await t.test('should capture S3 PUT event source arn attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture S3 PUT event source arn attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.s3PutEvent
+    stubEvent = lambdaSampleEvents.s3PutEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -710,21 +700,20 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], 'bucketarn')
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 's3')
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'bucketarn')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 's3')
 
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], 'bucketarn')
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 's3')
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'bucketarn')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 's3')
 
-      end()
+      t.end()
     }
   })
 
-  await t.test('should capture SNS event source arn attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture SNS event source arn attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.snsEvent
+    stubEvent = lambdaSampleEvents.snsEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -737,20 +726,19 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], 'eventsubscriptionarn')
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'sns')
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'eventsubscriptionarn')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'sns')
 
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], 'eventsubscriptionarn')
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'sns')
-      end()
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'eventsubscriptionarn')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'sns')
+      t.end()
     }
   })
 
-  await t.test('should capture DynamoDB Update event source attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture DynamoDB Update event source attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.dynamoDbUpdateEvent
+    stubEvent = lambdaSampleEvents.dynamoDbUpdateEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -763,17 +751,16 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], 'dynamodb:eventsourcearn')
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], 'dynamodb:eventsourcearn')
-      end()
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'dynamodb:eventsourcearn')
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'dynamodb:eventsourcearn')
+      t.end()
     }
   })
 
-  await t.test('should capture CodeCommit event source attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture CodeCommit event source attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.codeCommitEvent
+    stubEvent = lambdaSampleEvents.codeCommitEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -786,23 +773,16 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(
-        agentAttributes[EVENTSOURCE_ARN],
-        'arn:aws:codecommit:us-west-2:123456789012:my-repo'
-      )
-      assert.equal(
-        spanAttributes[EVENTSOURCE_ARN],
-        'arn:aws:codecommit:us-west-2:123456789012:my-repo'
-      )
-      end()
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'arn:aws:codecommit:us-west-2:123456789012:my-repo')
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'arn:aws:codecommit:us-west-2:123456789012:my-repo')
+      t.end()
     }
   })
 
-  await t.test('should not capture unknown event source attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should not capture unknown event source attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.cloudFrontEvent
+    stubEvent = lambdaSampleEvents.cloudFrontEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -815,19 +795,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], undefined)
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'cloudFront')
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], undefined)
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'cloudFront')
-      end()
+      t.equal(agentAttributes[EVENTSOURCE_ARN], undefined)
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'cloudFront')
+      t.equal(spanAttributes[EVENTSOURCE_ARN], undefined)
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'cloudFront')
+      t.end()
     }
   })
 
-  await t.test('should capture Kinesis Data Firehose event source attribute', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture Kinesis Data Firehose event source attribute', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.kinesisDataFirehoseEvent
+    stubEvent = lambdaSampleEvents.kinesisDataFirehoseEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -840,20 +819,19 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_ARN], 'aws:lambda:events')
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'firehose')
+      t.equal(agentAttributes[EVENTSOURCE_ARN], 'aws:lambda:events')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'firehose')
 
-      assert.equal(spanAttributes[EVENTSOURCE_ARN], 'aws:lambda:events')
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'firehose')
-      end()
+      t.equal(spanAttributes[EVENTSOURCE_ARN], 'aws:lambda:events')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'firehose')
+      t.end()
     }
   })
 
-  await t.test('should capture ALB event type', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture ALB event type', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.albEvent
+    stubEvent = lambdaSampleEvents.albEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -866,28 +844,27 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(
+      t.equal(
         agentAttributes[EVENTSOURCE_ARN],
         'arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a'
       ) // eslint-disable-line max-len
 
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'alb')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'alb')
 
-      assert.equal(
+      t.equal(
         spanAttributes[EVENTSOURCE_ARN],
         'arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a'
       ) // eslint-disable-line max-len
 
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'alb')
-      end()
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'alb')
+      t.end()
     }
   })
 
-  await t.test('should capture CloudWatch Scheduled event type', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture CloudWatch Scheduled event type', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.cloudwatchScheduled
+    stubEvent = lambdaSampleEvents.cloudwatchScheduled
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -900,26 +877,25 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(
+      t.equal(
         agentAttributes[EVENTSOURCE_ARN],
         'arn:aws:events:us-west-2:123456789012:rule/ExampleRule'
       )
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'cloudWatch_scheduled')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'cloudWatch_scheduled')
 
-      assert.equal(
+      t.equal(
         spanAttributes[EVENTSOURCE_ARN],
         'arn:aws:events:us-west-2:123456789012:rule/ExampleRule'
       )
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'cloudWatch_scheduled')
-      end()
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'cloudWatch_scheduled')
+      t.end()
     }
   })
 
-  await t.test('should capture SES event type', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture SES event type', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
-    const stubEvent = lambdaSampleEvents.sesEvent
+    stubEvent = lambdaSampleEvents.sesEvent
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -932,21 +908,20 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'ses')
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'ses')
-      end()
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'ses')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'ses')
+      t.end()
     }
   })
 
-  await t.test('should capture ALB event type with multi value parameters', (t, end) => {
-    const { agent, awsLambda, stubContext, stubCallback } = t.nr
+  t.test('should capture ALB event type with multi value parameters', (t) => {
     agent.on('transactionFinished', confirmAgentAttribute)
 
     agent.config.attributes.enabled = true
     agent.config.attributes.include = ['request.parameters.*']
     agent.config.emit('attributes.include')
 
-    const stubEvent = lambdaSampleEvents.albEventWithMultiValueParameters
+    stubEvent = lambdaSampleEvents.albEventWithMultiValueParameters
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       callback(null, 'worked')
@@ -958,39 +933,38 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       const segment = transaction.agent.tracer.getSegment()
       const spanAttributes = segment.attributes.get(ATTR_DEST.SPAN_EVENT)
 
-      assert.equal(
+      t.equal(
         agentAttributes[EVENTSOURCE_ARN],
         'arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a'
       ) // eslint-disable-line max-len
 
-      assert.equal(agentAttributes[EVENTSOURCE_TYPE], 'alb')
+      t.equal(agentAttributes[EVENTSOURCE_TYPE], 'alb')
 
-      assert.equal(agentAttributes['request.method'], 'GET')
+      t.equal(agentAttributes['request.method'], 'GET')
 
       // validate that multi value query string parameters are normalized to comma seperated strings
-      assert.equal(agentAttributes['request.parameters.query'], '1234ABCD,other')
+      t.equal(agentAttributes['request.parameters.query'], '1234ABCD,other')
 
-      assert.equal(
+      t.equal(
         spanAttributes[EVENTSOURCE_ARN],
         'arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a'
       ) // eslint-disable-line max-len
 
-      assert.equal(spanAttributes[EVENTSOURCE_TYPE], 'alb')
+      t.equal(spanAttributes[EVENTSOURCE_TYPE], 'alb')
 
       // validate that multi value headers are normalized to comma seperated strings
-      assert.equal(
+      t.equal(
         spanAttributes['request.headers.setCookie'],
         'cookie-name=cookie-value;Domain=myweb.com;Secure;HttpOnly,cookie-name=cookie-other-value'
       )
-      end()
+      t.end()
     }
   })
 
-  await t.test('when callback used', async (t) => {
-    helper.unloadAgent(t.nr.agent)
+  t.test('when callback used', (t) => {
+    t.autoend()
 
-    await t.test('should end appropriately', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext } = t.nr
+    t.test('should end appropriately', (t) => {
       let transaction
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -999,16 +973,15 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       })
 
       wrappedHandler(stubEvent, stubContext, function confirmEndCallback() {
-        assert.equal(transaction.isActive(), false)
+        t.equal(transaction.isActive(), false)
 
         const currentTransaction = agent.tracer.getTransaction()
-        assert.equal(currentTransaction, null)
-        end()
+        t.equal(currentTransaction, null)
+        t.end()
       })
     })
 
-    await t.test('should notice errors', (t, end) => {
-      const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice errors', (t) => {
       agent.on('harvestStarted', confirmErrorCapture)
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -1018,18 +991,17 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
 
       function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], errorMessage)
-        assert.equal(noticedError[3], 'SyntaxError')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], errorMessage)
+        t.equal(noticedError[3], 'SyntaxError')
 
-        end()
+        t.end()
       }
     })
 
-    await t.test('should notice string errors', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice string errors', (t) => {
       agent.on('harvestStarted', confirmErrorCapture)
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -1039,25 +1011,24 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
 
       function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], 'failed')
-        assert.equal(noticedError[3], 'Error')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], 'failed')
+        t.equal(noticedError[3], 'Error')
 
         const data = noticedError[4]
-        assert.ok(data.stack_trace)
+        t.ok(data.stack_trace)
 
-        end()
+        t.end()
       }
     })
   })
 
-  await test('when context.done used', async (t) => {
-    helper.unloadAgent(t.nr.agent)
+  t.test('when context.done used', (t) => {
+    t.autoend()
 
-    await t.test('should end appropriately', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should end appropriately', (t) => {
       let transaction
 
       stubContext.done = confirmEndCallback
@@ -1070,24 +1041,23 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
 
       function confirmEndCallback() {
-        assert.equal(transaction.isActive(), false)
+        t.equal(transaction.isActive(), false)
 
         const currentTransaction = agent.tracer.getTransaction()
-        assert.equal(currentTransaction, null)
-        end()
+        t.equal(currentTransaction, null)
+        t.end()
       }
     })
 
-    await t.test('should notice errors', (t, end) => {
-      const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice errors', (t) => {
       agent.on('harvestStarted', function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], errorMessage)
-        assert.equal(noticedError[3], 'SyntaxError')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], errorMessage)
+        t.equal(noticedError[3], 'SyntaxError')
 
-        end()
+        t.end()
       })
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1097,19 +1067,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
     })
 
-    await t.test('should notice string errors', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice string errors', (t) => {
       agent.on('harvestStarted', function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], 'failed')
-        assert.equal(noticedError[3], 'Error')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], 'failed')
+        t.equal(noticedError[3], 'Error')
 
         const data = noticedError[4]
-        assert.ok(data.stack_trace)
+        t.ok(data.stack_trace)
 
-        end()
+        t.end()
       })
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1120,19 +1089,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
     })
   })
 
-  await t.test('when context.succeed used', async (t) => {
-    helper.unloadAgent(t.nr.agent)
+  t.test('when context.succeed used', (t) => {
+    t.autoend()
 
-    await t.test('should end appropriately', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should end appropriately', (t) => {
       let transaction
 
       stubContext.succeed = function confirmEndCallback() {
-        assert.equal(transaction.isActive(), false)
+        t.equal(transaction.isActive(), false)
 
         const currentTransaction = agent.tracer.getTransaction()
-        assert.equal(currentTransaction, null)
-        end()
+        t.equal(currentTransaction, null)
+        t.end()
       }
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1144,19 +1112,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
     })
   })
 
-  await t.test('when context.fail used', async (t) => {
-    helper.unloadAgent(t.nr.agent)
+  t.test('when context.fail used', (t) => {
+    t.autoend()
 
-    await t.test('should end appropriately', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should end appropriately', (t) => {
       let transaction
 
       stubContext.fail = function confirmEndCallback() {
-        assert.equal(transaction.isActive(), false)
+        t.equal(transaction.isActive(), false)
 
         const currentTransaction = agent.tracer.getTransaction()
-        assert.equal(currentTransaction, null)
-        end()
+        t.equal(currentTransaction, null)
+        t.end()
       }
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1167,16 +1134,15 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
     })
 
-    await t.test('should notice errors', (t, end) => {
-      const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice errors', (t) => {
       agent.on('harvestStarted', function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], errorMessage)
-        assert.equal(noticedError[3], 'SyntaxError')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], errorMessage)
+        t.equal(noticedError[3], 'SyntaxError')
 
-        end()
+        t.end()
       })
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1186,19 +1152,18 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
       wrappedHandler(stubEvent, stubContext, stubCallback)
     })
 
-    await t.test('should notice string errors', (t, end) => {
-      const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+    t.test('should notice string errors', (t) => {
       agent.on('harvestStarted', function confirmErrorCapture() {
-        assert.equal(agent.errors.traceAggregator.errors.length, 1)
+        t.equal(agent.errors.traceAggregator.errors.length, 1)
         const noticedError = agent.errors.traceAggregator.errors[0]
-        assert.equal(noticedError[1], expectedBgTransactionName)
-        assert.equal(noticedError[2], 'failed')
-        assert.equal(noticedError[3], 'Error')
+        t.equal(noticedError[1], expectedBgTransactionName)
+        t.equal(noticedError[2], 'failed')
+        t.equal(noticedError[3], 'Error')
 
         const data = noticedError[4]
-        assert.ok(data.stack_trace)
+        t.ok(data.stack_trace)
 
-        end()
+        t.end()
       })
 
       const wrappedHandler = awsLambda.patchLambdaHandler((event, context) => {
@@ -1209,54 +1174,51 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
     })
   })
 
-  await t.test('should create a transaction for handler', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should create a transaction for handler', (t) => {
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
       const transaction = agent.tracer.getTransaction()
 
-      assert.ok(transaction)
-      assert.equal(transaction.type, 'bg')
-      assert.equal(transaction.getFullName(), expectedBgTransactionName)
-      assert.ok(transaction.isActive())
+      t.ok(transaction)
+      t.equal(transaction.type, 'bg')
+      t.equal(transaction.getFullName(), expectedBgTransactionName)
+      t.ok(transaction.isActive())
 
       callback(null, 'worked')
-      end()
+      t.end()
     })
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
   })
 
-  await t.test('should end transactions on a beforeExit event on process', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
-    tempRemoveListeners({ t, emitter: process, event: 'beforeExit' })
+  t.test('should end transactions on a beforeExit event on process', (t) => {
+    helper.temporarilyRemoveListeners(t, process, 'beforeExit')
 
     const wrappedHandler = awsLambda.patchLambdaHandler(() => {
       const transaction = agent.tracer.getTransaction()
 
-      assert.ok(transaction)
-      assert.equal(transaction.type, 'bg')
-      assert.equal(transaction.getFullName(), expectedBgTransactionName)
-      assert.ok(transaction.isActive())
+      t.ok(transaction)
+      t.equal(transaction.type, 'bg')
+      t.equal(transaction.getFullName(), expectedBgTransactionName)
+      t.ok(transaction.isActive())
 
       process.emit('beforeExit')
 
-      assert.equal(transaction.isActive(), false)
-      end()
+      t.equal(transaction.isActive(), false)
+      t.end()
     })
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
   })
 
-  await t.test('should end transactions after the returned promise resolves', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should end transactions after the returned promise resolves', (t) => {
     let transaction
     const wrappedHandler = awsLambda.patchLambdaHandler(() => {
       transaction = agent.tracer.getTransaction()
       return new Promise((resolve) => {
-        assert.ok(transaction)
-        assert.equal(transaction.type, 'bg')
-        assert.equal(transaction.getFullName(), expectedBgTransactionName)
-        assert.ok(transaction.isActive())
+        t.ok(transaction)
+        t.equal(transaction.type, 'bg')
+        t.equal(transaction.getFullName(), expectedBgTransactionName)
+        t.ok(transaction.isActive())
 
         return resolve('hello')
       })
@@ -1264,28 +1226,28 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
       .then((value) => {
-        assert.equal(value, 'hello')
-        assert.equal(transaction.isActive(), false)
+        t.equal(value, 'hello')
+        t.equal(transaction.isActive(), false)
 
-        end()
+        t.end()
       })
       .catch((err) => {
-        end(err)
+        t.error(err)
+        t.end()
       })
   })
 
-  await t.test('should record error event when func is async and promise is rejected', (t, end) => {
-    const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should record error event when func is async and promise is rejected', (t) => {
     agent.on('harvestStarted', confirmErrorCapture)
 
     let transaction
     const wrappedHandler = awsLambda.patchLambdaHandler(() => {
       transaction = agent.tracer.getTransaction()
       return new Promise((resolve, reject) => {
-        assert.ok(transaction)
-        assert.equal(transaction.type, 'bg')
-        assert.equal(transaction.getFullName(), expectedBgTransactionName)
-        assert.ok(transaction.isActive())
+        t.ok(transaction)
+        t.equal(transaction.type, 'bg')
+        t.equal(transaction.getFullName(), expectedBgTransactionName)
+        t.ok(transaction.isActive())
 
         reject(error)
       })
@@ -1293,48 +1255,48 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
       .then(() => {
-        end(Error('wrapped handler should fail and go to catch block'))
+        t.error(new Error('wrapped handler should fail and go to catch block'))
+        t.end()
       })
       .catch((err) => {
-        assert.equal(err, error)
-        assert.equal(transaction.isActive(), false)
+        t.equal(err, error)
+        t.equal(transaction.isActive(), false)
 
-        end()
+        t.end()
       })
 
     function confirmErrorCapture() {
       const errors = agent.errors.traceAggregator.errors
-      assert.equal(errors.length, 1)
+      t.equal(errors.length, 1)
 
       const noticedError = errors[0]
       const [, transactionName, message, type] = noticedError
-      assert.equal(transactionName, expectedBgTransactionName)
-      assert.equal(message, errorMessage)
-      assert.equal(type, 'SyntaxError')
+      t.equal(transactionName, expectedBgTransactionName)
+      t.equal(message, errorMessage)
+      t.equal(type, 'SyntaxError')
     }
   })
 
-  await t.test('should record error event when func is async and error is thrown', (t, end) => {
-    const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should record error event when func is async and error is thrown', (t) => {
     agent.on('harvestStarted', function confirmErrorCapture() {
       const errors = agent.errors.traceAggregator.errors
-      assert.equal(errors.length, 1)
+      t.equal(errors.length, 1)
 
       const noticedError = errors[0]
       const [, transactionName, message, type] = noticedError
-      assert.equal(transactionName, expectedBgTransactionName)
-      assert.equal(message, errorMessage)
-      assert.equal(type, 'SyntaxError')
+      t.equal(transactionName, expectedBgTransactionName)
+      t.equal(message, errorMessage)
+      t.equal(type, 'SyntaxError')
     })
 
     let transaction
     const wrappedHandler = awsLambda.patchLambdaHandler(() => {
       transaction = agent.tracer.getTransaction()
       return new Promise(() => {
-        assert.ok(transaction)
-        assert.equal(transaction.type, 'bg')
-        assert.equal(transaction.getFullName(), expectedBgTransactionName)
-        assert.ok(transaction.isActive())
+        t.ok(transaction)
+        t.equal(transaction.type, 'bg')
+        t.equal(transaction.getFullName(), expectedBgTransactionName)
+        t.ok(transaction.isActive())
 
         throw error
       })
@@ -1342,29 +1304,29 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
       .then(() => {
-        end(Error('wrapped handler should fail and go to catch block'))
+        t.error(new Error('wrapped handler should fail and go to catch block'))
+        t.end()
       })
       .catch((err) => {
-        assert.equal(err, error)
-        assert.equal(transaction.isActive(), false)
+        t.equal(err, error)
+        t.equal(transaction.isActive(), false)
 
-        end()
+        t.end()
       })
   })
 
-  await t.test(
+  t.test(
     'should record error event when func is async an UnhandledPromiseRejection is thrown',
-    (t, end) => {
-      const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+    (t) => {
       agent.on('harvestStarted', function confirmErrorCapture() {
         const errors = agent.errors.traceAggregator.errors
-        assert.equal(errors.length, 1)
+        t.equal(errors.length, 1)
 
         const noticedError = errors[0]
         const [, transactionName, message, type] = noticedError
-        assert.equal(transactionName, expectedBgTransactionName)
-        assert.equal(message, errorMessage)
-        assert.equal(type, 'SyntaxError')
+        t.equal(transactionName, expectedBgTransactionName)
+        t.equal(message, errorMessage)
+        t.equal(type, 'SyntaxError')
       })
 
       let transaction
@@ -1372,10 +1334,10 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         transaction = agent.tracer.getTransaction()
         // eslint-disable-next-line no-new
         new Promise(() => {
-          assert.ok(transaction)
-          assert.equal(transaction.type, 'bg')
-          assert.equal(transaction.getFullName(), expectedBgTransactionName)
-          assert.ok(transaction.isActive())
+          t.ok(transaction)
+          t.equal(transaction.type, 'bg')
+          t.equal(transaction.getFullName(), expectedBgTransactionName)
+          t.ok(transaction.isActive())
 
           throw error
         })
@@ -1383,56 +1345,48 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         await new Promise((resolve) => setTimeout(resolve, 1))
       })
 
-      tempOverrideUncaught({
-        t,
-        type: tempOverrideUncaught.REJECTION,
-        handler(err) {
-          assert.equal(err, error)
-          assert.equal(transaction.isActive(), false)
-          end()
-        }
+      process.on('unhandledRejection', (err) => {
+        t.equal(err, error)
+        t.equal(transaction.isActive(), false)
+
+        t.end()
       })
 
       wrappedHandler(stubEvent, stubContext, stubCallback)
     }
   )
 
-  await t.test('should record error event when error is thrown', (t, end) => {
-    const plan = tspl(t, { plan: 8 })
-    const { agent, awsLambda, error, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should record error event when error is thrown', (t) => {
+    helper.temporarilyOverrideTapUncaughtBehavior(tap, t)
 
-    agent.on('harvestStarted', function confirmErrorCapture() {
-      const errors = agent.errors.traceAggregator.errors
-      plan.equal(errors.length, 1)
-
-      const noticedError = errors[0]
-      const [, transactionName, message, type] = noticedError
-      plan.equal(transactionName, expectedBgTransactionName)
-      plan.equal(message, errorMessage)
-      plan.equal(type, 'SyntaxError')
-    })
+    agent.on('harvestStarted', confirmErrorCapture)
     const wrappedHandler = awsLambda.patchLambdaHandler(() => {
       const transaction = agent.tracer.getTransaction()
-      plan.ok(transaction)
-      plan.equal(transaction.type, 'bg')
-      plan.equal(transaction.getFullName(), expectedBgTransactionName)
-      plan.ok(transaction.isActive())
+      t.ok(transaction)
+      t.equal(transaction.type, 'bg')
+      t.equal(transaction.getFullName(), expectedBgTransactionName)
+      t.ok(transaction.isActive())
 
       throw error
     })
 
-    try {
-      wrappedHandler(stubEvent, stubContext, stubCallback)
-    } catch (error) {
-      if (error.name !== 'SyntaxError') {
-        throw error
-      }
-      end()
+    wrappedHandler(stubEvent, stubContext, stubCallback)
+
+    function confirmErrorCapture() {
+      const errors = agent.errors.traceAggregator.errors
+      t.equal(errors.length, 1)
+
+      const noticedError = errors[0]
+      const [, transactionName, message, type] = noticedError
+      t.equal(transactionName, expectedBgTransactionName)
+      t.equal(message, errorMessage)
+      t.equal(type, 'SyntaxError')
+
+      t.end()
     }
   })
 
-  await t.test('should not end transactions twice', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should not end transactions twice', (t) => {
     let transaction
     const wrappedHandler = awsLambda.patchLambdaHandler((ev, ctx, cb) => {
       transaction = agent.tracer.getTransaction()
@@ -1446,32 +1400,32 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
         return oldEnd.apply(transaction, arguments)
       }
       return new Promise((resolve) => {
-        assert.ok(transaction)
-        assert.equal(transaction.type, 'bg')
-        assert.equal(transaction.getFullName(), expectedBgTransactionName)
-        assert.ok(transaction.isActive())
+        t.ok(transaction)
+        t.equal(transaction.type, 'bg')
+        t.equal(transaction.getFullName(), expectedBgTransactionName)
+        t.ok(transaction.isActive())
 
         cb()
 
-        assert.equal(transaction.isActive(), false)
+        t.equal(transaction.isActive(), false)
         return resolve('hello')
       })
     })
 
     wrappedHandler(stubEvent, stubContext, stubCallback)
       .then((value) => {
-        assert.equal(value, 'hello')
-        assert.equal(transaction.isActive(), false)
+        t.equal(value, 'hello')
+        t.equal(transaction.isActive(), false)
 
-        end()
+        t.end()
       })
       .catch((err) => {
-        end(err)
+        t.error(err)
+        t.end()
       })
   })
 
-  await t.test('should record standard background metrics', (t, end) => {
-    const { agent, awsLambda, stubEvent, stubContext, stubCallback } = t.nr
+  t.test('should record standard background metrics', (t) => {
     agent.on('harvestStarted', confirmMetrics)
 
     const wrappedHandler = awsLambda.patchLambdaHandler((event, context, callback) => {
@@ -1482,27 +1436,31 @@ test('AwsLambda.patchLambdaHandler', async (t) => {
 
     function confirmMetrics() {
       const unscopedMetrics = getMetrics(agent).unscoped
-      assert.ok(unscopedMetrics)
+      t.ok(unscopedMetrics)
 
       const otherTransactionAllName = 'OtherTransaction/all'
       const otherTransactionAllMetric = unscopedMetrics[otherTransactionAllName]
-      assert.ok(otherTransactionAllMetric)
-      assert.equal(otherTransactionAllMetric.callCount, 1)
+      t.ok(otherTransactionAllMetric)
+      t.equal(otherTransactionAllMetric.callCount, 1)
 
       const bgTransactionNameMetric = unscopedMetrics[expectedBgTransactionName]
-      assert.ok(bgTransactionNameMetric)
-      assert.equal(bgTransactionNameMetric.callCount, 1)
+      t.ok(bgTransactionNameMetric)
+      t.equal(bgTransactionNameMetric.callCount, 1)
 
       const otherTransactionTotalTimeMetric = unscopedMetrics.OtherTransactionTotalTime
-      assert.ok(otherTransactionTotalTimeMetric)
-      assert.equal(otherTransactionAllMetric.callCount, 1)
+      t.ok(otherTransactionTotalTimeMetric)
+      t.equal(otherTransactionAllMetric.callCount, 1)
 
       const otherTotalTimeBgTransactionName = 'OtherTransactionTotalTime/' + expectedTransactionName
       const otherTotalTimeBgTransactionNameMetric = unscopedMetrics[otherTotalTimeBgTransactionName]
-      assert.ok(otherTotalTimeBgTransactionNameMetric)
-      assert.equal(otherTotalTimeBgTransactionNameMetric.callCount, 1)
+      t.ok(otherTotalTimeBgTransactionNameMetric)
+      t.equal(otherTotalTimeBgTransactionNameMetric.callCount, 1)
 
-      end()
+      t.end()
     }
   })
 })
+
+function getMetrics(agent) {
+  return agent.metrics._metrics
+}
