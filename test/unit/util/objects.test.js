@@ -4,8 +4,8 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const { isSimpleObject, isNotEmpty } = require('../../../lib/util/objects')
 const fixtures = [
   { name: 'populated object', value: { a: 1, b: 2, c: 3 }, simple: true, nonEmpty: true },
@@ -25,16 +25,31 @@ const fixtures = [
   { name: 'function with false return', value: () => false, simple: false, nonEmpty: false }
 ]
 
-test('isSimpleObject should distinguish objects from non-objects', () => {
-  fixtures.forEach((f) => {
-    const testValue = isSimpleObject(f.value)
-    assert.equal(testValue, f.simple, `should be able to test ${f.name} correctly`)
+tap.test('isSimpleObject', (t) => {
+  t.test('should distinguish objects from non-objects', (t) => {
+    fixtures.forEach((f) => {
+      try {
+        const testValue = isSimpleObject(f.value)
+        t.equal(testValue, f.simple, `should be able to test ${f.name} correctly`)
+      } catch (e) {
+        t.notOk(e, `should be able to handle ${f.name} without error`)
+      }
+    })
+    t.end()
   })
+  t.end()
 })
-
-test('isNotEmpty should discern non-empty objects from empty objects and other entities', () => {
-  fixtures.forEach((f) => {
-    const testValue = isNotEmpty(f.value)
-    assert.equal(testValue, f.nonEmpty, `should be able to test ${f.name} correctly`)
+tap.test('isNotEmpty', (t) => {
+  t.test('should discern non-empty objects from empty objects and other entities', (t) => {
+    fixtures.forEach((f) => {
+      try {
+        const testValue = isNotEmpty(f.value)
+        t.equal(testValue, f.nonEmpty, `should be able to test ${f.name} correctly`)
+      } catch (e) {
+        t.notOk(e, `should be able to handle ${f.name} without error`)
+      }
+    })
+    t.end()
   })
+  t.end()
 })

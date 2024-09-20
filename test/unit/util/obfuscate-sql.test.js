@@ -4,43 +4,46 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const tests = require('../../lib/cross_agent_tests/sql_obfuscation/sql_obfuscation')
 const obfuscate = require('../../../lib/util/sql/obfuscate')
 
-function runTest(t, testCase, dialect) {
-  t.diagnostic(dialect)
-  const obfuscated = obfuscate(testCase.sql, dialect)
-  if (testCase.obfuscated.length === 1) {
-    assert.equal(obfuscated, testCase.obfuscated[0])
-  } else {
-    assert.ok(testCase.obfuscated.includes(obfuscated))
-  }
-}
-
-test('sql obfuscation', async (t) => {
-  await Promise.all(
-    tests.map(async (tc) => {
-      await t.test(tc.name, (t) => {
-        for (let i = 0; i < tc.dialects.length; ++i) {
-          runTest(t, tc, tc.dialects[i])
-        }
-      })
+tap.test('sql obfuscation', (t) => {
+  tests.forEach((test) => {
+    t.test(test.name, (t) => {
+      for (let i = 0; i < test.dialects.length; ++i) {
+        runTest(t, test, test.dialects[i])
+      }
+      t.end()
     })
-  )
-
-  await t.test('should handle line endings', () => {
-    const result = obfuscate('select * from foo where --abc\r\nbar=5', 'mysql')
-    assert.equal(result, 'select * from foo where ?\r\nbar=?')
   })
 
-  await t.test('should handle large JSON inserts', () => {
+  function runTest(t, test, dialect) {
+    t.comment(dialect)
+    const obfuscated = obfuscate(test.sql, dialect)
+    if (test.obfuscated.length === 1) {
+      t.equal(obfuscated, test.obfuscated[0])
+    } else {
+      t.ok(test.obfuscated.includes(obfuscated))
+    }
+  }
+
+  t.test('should handle line endings', (t) => {
+    const result = obfuscate('select * from foo where --abc\r\nbar=5', 'mysql')
+    t.equal(result, 'select * from foo where ?\r\nbar=?')
+    t.end()
+  })
+
+  t.test('should handle large JSON inserts', (t) => {
     const JSONData = '{"data": "' + new Array(8400000).fill('a').join('') + '"}'
     const result = obfuscate(
       'INSERT INTO "Documents" ("data") VALUES (\'' + JSONData + "')",
       'postgres'
     )
-    assert.equal(result, 'INSERT INTO "Documents" ("data") VALUES (?)')
+    t.equal(result, 'INSERT INTO "Documents" ("data") VALUES (?)')
+    t.end()
   })
+
+  t.end()
 })

@@ -4,17 +4,18 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const toCamelCase = require('../../../lib/util/camel-case')
 
-test('toCamelCase', () => {
+tap.test('toCamelCase', (t) => {
   ;[
     { str: 'snake_case', expected: 'snakeCase' },
     { str: 'myTestString', expected: 'myTestString' },
     { str: '123AttrKey', expected: '123AttrKey' },
     { str: 'X-Foo-Bar', expected: 'xFooBar' }
   ].forEach(({ str, expected }) => {
-    assert.equal(toCamelCase(str), expected, `should convert ${str} to ${expected}`)
+    t.equal(toCamelCase(str), expected, `should convert ${str} to ${expected}`)
   })
+  t.end()
 })

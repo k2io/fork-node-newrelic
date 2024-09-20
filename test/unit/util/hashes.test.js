@@ -4,33 +4,39 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const hashes = require('../../../lib/util/hashes')
 
-test('hashes', async (t) => {
-  await t.test('#makeId always returns the correct length', () => {
-    for (let length = 4; length < 64; length++) {
-      for (let attempts = 0; attempts < 500; attempts++) {
-        const id = hashes.makeId(length)
-        assert.equal(id.length, length)
+tap.test('hashes', (t) => {
+  t.test('#makeId', (t) => {
+    t.test('always returns the correct length', (t) => {
+      for (let length = 4; length < 64; length++) {
+        for (let attempts = 0; attempts < 500; attempts++) {
+          const id = hashes.makeId(length)
+          t.equal(id.length, length)
+        }
       }
-    }
-  })
+      t.end()
+    })
 
-  await t.test('#makeId always unique', () => {
-    const ids = {}
-    for (let length = 16; length < 64; length++) {
-      for (let attempts = 0; attempts < 500; attempts++) {
-        const id = hashes.makeId(length)
+    t.test('always unique', (t) => {
+      const ids = {}
+      for (let length = 16; length < 64; length++) {
+        for (let attempts = 0; attempts < 500; attempts++) {
+          const id = hashes.makeId(length)
 
-        // Should be unique
-        assert.equal(ids[id], undefined)
-        ids[id] = true
+          // Should be unique
+          t.equal(ids[id], undefined)
+          ids[id] = true
 
-        // and the correct length
-        assert.equal(id.length, length)
+          // and the correct length
+          t.equal(id.length, length)
+        }
       }
-    }
+      t.end()
+    })
+    t.end()
   })
+  t.end()
 })

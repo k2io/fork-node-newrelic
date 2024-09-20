@@ -4,12 +4,12 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const { test } = require('tap')
 const sinon = require('sinon')
 const eachLimit = require('../../../lib/util/async-each-limit')
 
-test('eachLimit should limit concurrent async executions', async () => {
+test('eachLimit should limit concurrent async executions', async (t) => {
   let firstPromiseResolve
   let secondPromiseResolve
   let thirdPromiseResolve
@@ -47,20 +47,20 @@ test('eachLimit should limit concurrent async executions', async () => {
 
   const promise = eachLimit(items, mapper, 2)
 
-  assert.equal(access.callCount, 2, 'should have called two promises')
-  assert.ok(access.calledWith('foo.json'), 'should have called the first promise')
-  assert.ok(access.calledWith('bar.json'), 'should have called the second promise')
-  assert.ok(!access.calledWith('baz.json'), 'should not have called the third promise yet')
+  t.equal(access.callCount, 2, 'should have called two promises')
+  t.ok(access.calledWith('foo.json'), 'should have called the first promise')
+  t.ok(access.calledWith('bar.json'), 'should have called the second promise')
+  t.notOk(access.calledWith('baz.json'), 'should not have called the third promise yet')
 
   firstPromiseResolve()
-  assert.ok(!access.calledWith('baz.json'), 'should still not have called the third promise')
+  t.notOk(access.calledWith('baz.json'), 'should still not have called the third promise')
 
   secondPromiseResolve()
   thirdPromiseResolve()
 
   const results = await promise
 
-  assert.equal(access.callCount, 3, 'should have called three promises')
-  assert.ok(access.calledWith('baz.json'), 'should have called the third promise')
-  assert.deepEqual(results, [true, true, true], 'should return the correct results')
+  t.equal(access.callCount, 3, 'should have called three promises')
+  t.ok(access.calledWith('baz.json'), 'should have called the third promise')
+  t.same(results, [true, true, true], 'should return the correct results')
 })

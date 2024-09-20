@@ -4,17 +4,21 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const testData = require('../../lib/cross_agent_tests/labels.json')
 const parse = require('../../../lib/util/label-parser').fromString
 
-test('label parser should pass cross-agent tests', () => {
-  testData.forEach((example) => {
-    const result = parse(example.labelString)
-    assert.deepEqual(result.labels.sort(byType), example.expected.sort(byType))
-    assert.equal(!!result.warnings.length, example.warning)
+tap.test('label praser', (t) => {
+  t.test('should pass cross-agent tests', (t) => {
+    testData.forEach((example) => {
+      const result = parse(example.labelString)
+      t.same(result.labels.sort(byType), example.expected.sort(byType))
+      t.same(!!result.warnings.length, example.warning)
+    })
+    t.end()
   })
+  t.end()
 })
 
 function byType(a, b) {
