@@ -4,50 +4,54 @@
  */
 
 'use strict'
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
 const Config = require('../../../lib/config')
 const Normalizer = require('../../../lib/metrics/normalizer')
 
 const stagingRules = require('./staging-rules')
-function beforeEach(ctx) {
-  ctx.nr = {}
+function beforeEach(t) {
   const config = { enforce_backstop: true }
-  ctx.nr.normalizer = new Normalizer(config, 'URL')
+  t.context.normalizer = new Normalizer(config, 'URL')
 }
 
-test('MetricNormalizer', async function (t) {
-  await t.test('normalize', async (t) => {
+tap.test('MetricNormalizer', function (t) {
+  t.autoend()
+  t.test('normalize', (t) => {
+    t.autoend()
     t.beforeEach(beforeEach)
-    await t.test('should throw when instantiated without config', function () {
-      assert.throws(function () {
+    t.test('should throw when instantiated without config', function (t) {
+      t.throws(function () {
         // eslint-disable-next-line no-new
         new Normalizer()
       })
+      t.end()
     })
 
-    await t.test('should throw when instantiated without type', function () {
+    t.test('should throw when instantiated without type', function (t) {
       const config = { enforce_backstop: true }
-      assert.throws(function () {
+      t.throws(function () {
         // eslint-disable-next-line no-new
         new Normalizer(config)
       })
+      t.end()
     })
 
-    await t.test('should normalize even without any rules set', function (t) {
-      const { normalizer } = t.nr
-      assert.equal(normalizer.normalize('/sample').value, 'NormalizedUri/*')
+    t.test('should normalize even without any rules set', function (t) {
+      const { normalizer } = t.context
+      t.equal(normalizer.normalize('/sample').value, 'NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('should normalize with an empty rule set', function (t) {
-      const { normalizer } = t.nr
+    t.test('should normalize with an empty rule set', function (t) {
+      const { normalizer } = t.context
       normalizer.load([])
 
-      assert.equal(normalizer.normalize('/sample').value, 'NormalizedUri/*')
+      t.equal(normalizer.normalize('/sample').value, 'NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('should ignore a matching name', function (t) {
-      const { normalizer } = t.nr
+    t.test('should ignore a matching name', function (t) {
+      const { normalizer } = t.context
       normalizer.load([
         {
           each_segment: false,
@@ -60,11 +64,12 @@ test('MetricNormalizer', async function (t) {
         }
       ])
 
-      assert.equal(normalizer.normalize('/long_polling').ignore, true)
+      t.equal(normalizer.normalize('/long_polling').ignore, true)
+      t.end()
     })
 
-    await t.test('should apply rules by precedence', function (t) {
-      const { normalizer } = t.nr
+    t.test('should apply rules by precedence', function (t) {
+      const { normalizer } = t.context
       normalizer.load([
         {
           each_segment: true,
@@ -86,14 +91,12 @@ test('MetricNormalizer', async function (t) {
         }
       ])
 
-      assert.equal(
-        normalizer.normalize('/rice/is/not/rice').value,
-        'NormalizedUri/rice/is/not/millet'
-      )
+      t.equal(normalizer.normalize('/rice/is/not/rice').value, 'NormalizedUri/rice/is/not/millet')
+      t.end()
     })
 
-    await t.test('should terminate when indicated by rule', function (t) {
-      const { normalizer } = t.nr
+    t.test('should terminate when indicated by rule', function (t) {
+      const { normalizer } = t.context
       normalizer.load([
         {
           each_segment: true,
@@ -115,22 +118,21 @@ test('MetricNormalizer', async function (t) {
         }
       ])
 
-      assert.equal(
-        normalizer.normalize('/rice/is/not/rice').value,
-        'NormalizedUri/rice/is/not/mochi'
-      )
+      t.equal(normalizer.normalize('/rice/is/not/rice').value, 'NormalizedUri/rice/is/not/mochi')
+      t.end()
     })
   })
 
-  await t.test('with rules captured from the staging collector on 2012-08-29', async function (t) {
-    t.beforeEach(function (ctx) {
-      beforeEach(ctx)
-      const { normalizer } = ctx.nr
+  t.test('with rules captured from the staging collector on 2012-08-29', function (t) {
+    t.autoend()
+    t.beforeEach(function (t) {
+      beforeEach(t)
+      const { normalizer } = t.context
       normalizer.load(stagingRules)
     })
 
-    await t.test('should eliminate duplicate rules as part of loading them', function (t) {
-      const { normalizer } = t.nr
+    t.test('should eliminate duplicate rules as part of loading them', function (t) {
+      const { normalizer } = t.context
       const patternWithSlash = '^(.*)\\/[0-9][0-9a-f_,-]*\\.([0-9a-z][0-9a-z]*)$'
       const reduced = [
         {
@@ -171,31 +173,35 @@ test('MetricNormalizer', async function (t) {
         }
       ]
 
-      assert.deepEqual(
+      t.same(
         normalizer.rules.map((r) => {
           return r.toJSON()
         }),
         reduced
       )
+      t.end()
     })
 
-    await t.test('should normalize a JPEGgy URL', function (t) {
-      const { normalizer } = t.nr
-      assert.equal(normalizer.normalize('/excessivity.jpeg').value, 'NormalizedUri/*.jpeg')
+    t.test('should normalize a JPEGgy URL', function (t) {
+      const { normalizer } = t.context
+      t.equal(normalizer.normalize('/excessivity.jpeg').value, 'NormalizedUri/*.jpeg')
+      t.end()
     })
 
-    await t.test('should normalize a JPGgy URL', function (t) {
-      const { normalizer } = t.nr
-      assert.equal(normalizer.normalize('/excessivity.jpg').value, 'NormalizedUri/*.jpg')
+    t.test('should normalize a JPGgy URL', function (t) {
+      const { normalizer } = t.context
+      t.equal(normalizer.normalize('/excessivity.jpg').value, 'NormalizedUri/*.jpg')
+      t.end()
     })
 
-    await t.test('should normalize a CSS URL', function (t) {
-      const { normalizer } = t.nr
-      assert.equal(normalizer.normalize('/style.css').value, 'NormalizedUri/*.css')
+    t.test('should normalize a CSS URL', function (t) {
+      const { normalizer } = t.context
+      t.equal(normalizer.normalize('/style.css').value, 'NormalizedUri/*.css')
+      t.end()
     })
 
-    await t.test('should drop old rules when reloading', function (t) {
-      const { normalizer } = t.nr
+    t.test('should drop old rules when reloading', function (t) {
+      const { normalizer } = t.context
       const newRule = {
         each_segment: false,
         eval_order: 0,
@@ -216,48 +222,54 @@ test('MetricNormalizer', async function (t) {
         ignore: false,
         replacement: '$1'
       }
-      assert.deepEqual(
+      t.same(
         normalizer.rules.map((r) => {
           return r.toJSON()
         }),
         [expected]
       )
+      t.end()
     })
   })
 
-  await t.test('when calling addSimple', async function (t) {
+  t.test('when calling addSimple', function (t) {
+    t.autoend()
     t.beforeEach(beforeEach)
-    await t.test("won't crash with no parameters", function (t) {
-      const { normalizer } = t.nr
-      assert.doesNotThrow(function () {
+    t.test("won't crash with no parameters", function (t) {
+      const { normalizer } = t.context
+      t.doesNotThrow(function () {
         normalizer.addSimple()
       })
+      t.end()
     })
 
-    await t.test("won't crash when name isn't passed", function (t) {
-      const { normalizer } = t.nr
-      assert.doesNotThrow(function () {
+    t.test("won't crash when name isn't passed", function (t) {
+      const { normalizer } = t.context
+      t.doesNotThrow(function () {
         normalizer.addSimple('^t')
       })
+      t.end()
     })
 
-    await t.test("will ignore matches when name isn't passed", function (t) {
-      const { normalizer } = t.nr
+    t.test("will ignore matches when name isn't passed", function (t) {
+      const { normalizer } = t.context
       normalizer.addSimple('^t')
-      assert.equal(normalizer.rules[0].ignore, true)
+      t.equal(normalizer.rules[0].ignore, true)
+      t.end()
     })
 
-    await t.test('will create rename rules that work properly', function (t) {
-      const { normalizer } = t.nr
+    t.test('will create rename rules that work properly', function (t) {
+      const { normalizer } = t.context
       normalizer.addSimple('^/t(.*)$', '/w$1')
-      assert.equal(normalizer.normalize('/test').value, 'NormalizedUri/west')
+      t.equal(normalizer.normalize('/test').value, 'NormalizedUri/west')
+      t.end()
     })
   })
 
-  await t.test('when loading from config', async function (t) {
-    t.beforeEach(function (ctx) {
-      ctx.nr = {}
-      ctx.nr.config = new Config({
+  t.test('when loading from config', function (t) {
+    t.autoend()
+    t.beforeEach(function (t) {
+      t.context.config = new Config({
         rules: {
           name: [
             { pattern: '^first$', name: 'first', precedence: 500 },
@@ -268,31 +280,33 @@ test('MetricNormalizer', async function (t) {
         }
       })
 
-      ctx.nr.normalizer = new Normalizer(ctx.nr.config, 'URL')
+      t.context.normalizer = new Normalizer(t.context.config, 'URL')
     })
 
-    t.afterEach(function (ctx) {
-      ctx.nr.config = null
-      ctx.nr.normalizer = null
+    t.afterEach(function (t) {
+      t.context.config = null
+      t.context.normalizer = null
     })
 
-    await t.test('with feature flag reverse_naming_rules set to true', function (t) {
-      const { config, normalizer } = t.nr
+    t.test('with feature flag reverse_naming_rules set to true', function (t) {
+      const { config, normalizer } = t.context
       config.feature_flag = { reverse_naming_rules: true }
       normalizer.loadFromConfig()
-      assert.equal(normalizer.rules[1].replacement, 'third')
-      assert.equal(normalizer.rules[2].replacement, 'fourth')
-      assert.equal(normalizer.rules[3].replacement, 'second')
-      assert.equal(normalizer.rules[4].replacement, 'first')
+      t.equal(normalizer.rules[1].replacement, 'third')
+      t.equal(normalizer.rules[2].replacement, 'fourth')
+      t.equal(normalizer.rules[3].replacement, 'second')
+      t.equal(normalizer.rules[4].replacement, 'first')
+      t.end()
     })
 
-    await t.test('with feature flag reverse_naming_rules set to false (default)', function (t) {
-      const { normalizer } = t.nr
+    t.test('with feature flag reverse_naming_rules set to false (default)', function (t) {
+      const { normalizer } = t.context
       normalizer.loadFromConfig()
-      assert.equal(normalizer.rules[1].replacement, 'third')
-      assert.equal(normalizer.rules[2].replacement, 'first')
-      assert.equal(normalizer.rules[3].replacement, 'second')
-      assert.equal(normalizer.rules[4].replacement, 'fourth')
+      t.equal(normalizer.rules[1].replacement, 'third')
+      t.equal(normalizer.rules[2].replacement, 'first')
+      t.equal(normalizer.rules[3].replacement, 'second')
+      t.equal(normalizer.rules[4].replacement, 'fourth')
+      t.end()
     })
   })
 })

@@ -5,27 +5,28 @@
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
+
 const TxSegmentNormalizer = require('../../../lib/metrics/normalizer/tx_segment')
 const txTestData = require('../../lib/cross_agent_tests/transaction_segment_terms')
 
-test('The TxSegmentNormalizer', async (t) => {
+tap.test('The TxSegmentNormalizer', (t) => {
   // iterate over the cross_agent_tests
-  for (const test of txTestData) {
+  txTestData.forEach((test) => {
     // create the test and bind the test data to it.
-    await t.test(`should be ${test.testname}`, () => {
-      runTest(test)
+    t.test(`should be ${test.testname}`, (t) => {
+      runTest(t, test)
     })
-  }
-
-  await t.test('should reject non array to load', () => {
-    const normalizer = new TxSegmentNormalizer()
-    normalizer.load(1)
-    assert.ok(Array.isArray(normalizer.terms))
   })
 
-  await t.test('should accept arrays to load', () => {
+  t.test('should reject non array to load', (t) => {
+    const normalizer = new TxSegmentNormalizer()
+    normalizer.load(1)
+    t.ok(Array.isArray(normalizer.terms))
+    t.end()
+  })
+
+  t.test('should accept arrays to load', (t) => {
     const input = [
       {
         prefix: 'WebTrans/foo',
@@ -34,15 +35,20 @@ test('The TxSegmentNormalizer', async (t) => {
     ]
     const normalizer = new TxSegmentNormalizer()
     normalizer.load(input)
-    assert.deepEqual(normalizer.terms, input)
+    t.same(normalizer.terms, input)
+    t.end()
   })
+
+  t.end()
 })
 
-function runTest(data) {
+function runTest(t, data) {
   const normalizer = new TxSegmentNormalizer()
   normalizer.load(data.transaction_segment_terms)
 
-  for (const test of data.tests) {
-    assert.deepEqual(normalizer.normalize(test.input).value, test.expected)
-  }
+  data.tests.forEach((test) => {
+    t.hasStrict(normalizer.normalize(test.input), { value: test.expected })
+  })
+
+  t.end()
 }
