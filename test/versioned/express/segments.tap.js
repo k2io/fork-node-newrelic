@@ -243,17 +243,7 @@ test('router mounted as a route handler', function (t) {
     res.send('test')
   })
 
-  let path = '*'
-  let segmentPath = '/*'
-  let metricsPath = segmentPath
-
-  // express 5 router must be regular expressions
-  // need to handle the nuance of the segment vs metric name in express 5
-  if (isExpress5) {
-    path = /(.*)/
-    segmentPath = '/(.*)/'
-    metricsPath = '/(.*)'
-  }
+  const path = isExpress5 ? '(.*)' : '*'
   app.get(path, router1)
 
   runTest(t, '/test', function (segments, transaction) {
@@ -261,7 +251,7 @@ test('router mounted as a route handler', function (t) {
       t,
       transaction.trace.root.children[0],
       [
-        `Expressjs/Route Path: ${segmentPath}`,
+        `Expressjs/Route Path: /${path}`,
         [
           'Expressjs/Router: /',
           ['Expressjs/Route Path: /test', [NAMES.EXPRESS.MIDDLEWARE + 'testHandler']]
@@ -273,8 +263,8 @@ test('router mounted as a route handler', function (t) {
     checkMetrics(
       t,
       transaction.metrics,
-      [`${NAMES.EXPRESS.MIDDLEWARE}testHandler/${metricsPath}/test`],
-      `${metricsPath}/test`
+      [`${NAMES.EXPRESS.MIDDLEWARE}testHandler//${path}/test`],
+      `/${path}/test`
     )
 
     t.end()
