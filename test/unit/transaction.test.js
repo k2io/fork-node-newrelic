@@ -5,8 +5,7 @@
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
 const helper = require('../lib/agent_helper')
 const API = require('../../api')
 const AttributeFilter = require('../../lib/config/attribute-filter')
@@ -16,22 +15,24 @@ const Transaction = require('../../lib/transaction')
 const Segment = require('../../lib/transaction/trace/segment')
 const hashes = require('../../lib/util/hashes')
 const sinon = require('sinon')
-const { match } = require('../lib/custom-assertions')
 
-test('Transaction unit tests', async (t) => {
-  t.beforeEach(function (ctx) {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+tap.test('Transaction unit tests', (t) => {
+  t.autoend()
+
+  let agent = null
+  let txn = null
+
+  t.beforeEach(function () {
+    agent = helper.loadMockedAgent()
+    txn = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test('basic transaction tests', (t, end) => {
-    const { agent, txn } = t.nr
-    assert.throws(
+  t.test('basic transaction tests', (t) => {
+    t.throws(
       () => {
         return new Transaction()
       },
@@ -40,27 +41,26 @@ test('Transaction unit tests', async (t) => {
     )
 
     const trace = txn.trace
-    assert.ok(trace instanceof Trace, 'should create a trace on demand')
-    assert.ok(!(trace instanceof Array), 'should have at most one associated trace')
+    t.ok(trace instanceof Trace, 'should create a trace on demand')
+    t.notOk(trace instanceof Array, 'should have at most one associated trace')
 
     agent.on('transactionFinished', (inner) => {
-      assert.equal(
+      t.equal(
         inner.metrics,
         txn.metrics,
         'should hand its metrics off to the agent upon finalization'
       )
-      end()
+      t.end()
     })
 
     txn.end()
   })
 
-  await t.test('with DT enabled, should produce span events when finalizing', (t, end) => {
-    const { agent } = t.nr
+  t.test('with DT enabled, should produce span events when finalizing', (t) => {
     agent.config.distributed_tracing.enabled = true
 
     agent.once('transactionFinished', () => {
-      assert.equal(agent.spanEventAggregator.length, 1, 'should have a span event')
+      t.equal(agent.spanEventAggregator.length, 1, 'should have a span event')
     })
     helper.runInTransaction(agent, function (inner) {
       const childSegment = inner.trace.add('child')
@@ -68,15 +68,14 @@ test('Transaction unit tests', async (t) => {
       inner.end()
     })
 
-    end()
+    t.end()
   })
 
-  await t.test('with DT enabled, should not produce span events when ignored', (t, end) => {
-    const { agent } = t.nr
+  t.test('with DT enabled, should not produce span events when ignored', (t) => {
     agent.config.distributed_tracing.enabled = true
 
     agent.once('transactionFinished', () => {
-      assert.equal(agent.spanEventAggregator.length, 0, 'should have no span events')
+      t.equal(agent.spanEventAggregator.length, 0, 'should have no span events')
     })
     helper.runInTransaction(agent, function (inner) {
       const childSegment = inner.trace.add('child')
@@ -85,25 +84,23 @@ test('Transaction unit tests', async (t) => {
       inner.end()
     })
 
-    end()
+    t.end()
   })
 
-  await t.test('handing itself off to the agent upon finalization', (t, end) => {
-    const { agent, txn } = t.nr
+  t.test('handing itself off to the agent upon finalization', (t) => {
     agent.on('transactionFinished', (inner) => {
-      assert.deepEqual(inner, txn, 'should have the same transaction')
-      end()
+      t.same(inner, txn, 'should have the same transaction')
+      t.end()
     })
 
     txn.end()
   })
 
-  await t.test('should flush logs on end', (t, end) => {
-    const { agent, txn } = t.nr
+  t.test('should flush logs on end', (t) => {
     sinon.spy(txn.logs, 'flush')
     agent.on('transactionFinished', (inner) => {
-      assert.equal(inner.logs.flush.callCount, 1, 'should call `flush` once')
-      end()
+      t.equal(inner.logs.flush.callCount, 1, 'should call `flush` once')
+      t.end()
     })
 
     txn.logs.add('log-line1')
@@ -111,12 +108,11 @@ test('Transaction unit tests', async (t) => {
     txn.end()
   })
 
-  await t.test('should not flush logs when transaction is ignored', (t, end) => {
-    const { agent, txn } = t.nr
+  t.test('should not flush logs when transaction is ignored', (t) => {
     sinon.spy(txn.logs, 'flush')
     agent.on('transactionFinished', (inner) => {
-      assert.equal(inner.logs.flush.callCount, 0, 'should not call `flush`')
-      end()
+      t.equal(inner.logs.flush.callCount, 0, 'should not call `flush`')
+      t.end()
     })
 
     txn.logs.add('log-line1')
@@ -125,58 +121,45 @@ test('Transaction unit tests', async (t) => {
     txn.end()
   })
 
-  await t.test('initial transaction attributes', (t) => {
-    const { txn } = t.nr
-    assert.ok(txn.id, 'should have an ID')
-    assert.ok(txn.metrics, 'should have associated metrics')
-    assert.ok(txn.timer.isActive(), 'should be timing its duration')
-    assert.equal(txn.url, null, 'should have no associated URL (for hidden class)')
-    assert.equal(txn.name, null, 'should have no name set (for hidden class)')
-    assert.equal(
-      txn.nameState.getName(),
-      null,
-      'should have no PARTIAL name set (for hidden class)'
-    )
-    assert.equal(txn.statusCode, null, 'should have no HTTP status code set (for hidden class)')
-    assert.equal(txn.error, null, 'should have no error attached (for hidden class)')
-    assert.equal(txn.verb, null, 'should have no HTTP method / verb set (for hidden class)')
-    assert.ok(!txn.ignore, 'should not be ignored by default (for hidden class)')
-    assert.equal(txn.sampled, null, 'should not have a sampled state set')
+  t.test('initial transaction attributes', (t) => {
+    t.ok(txn.id, 'should have an ID')
+    t.ok(txn.metrics, 'should have associated metrics')
+    t.ok(txn.timer.isActive(), 'should be timing its duration')
+    t.equal(txn.url, null, 'should have no associated URL (for hidden class)')
+    t.equal(txn.name, null, 'should have no name set (for hidden class)')
+    t.equal(txn.nameState.getName(), null, 'should have no PARTIAL name set (for hidden class)')
+    t.equal(txn.statusCode, null, 'should have no HTTP status code set (for hidden class)')
+    t.equal(txn.error, null, 'should have no error attached (for hidden class)')
+    t.equal(txn.verb, null, 'should have no HTTP method / verb set (for hidden class)')
+    t.notOk(txn.ignore, 'should not be ignored by default (for hidden class)')
+    t.equal(txn.sampled, null, 'should not have a sampled state set')
+    t.end()
   })
 
-  await t.test('with associated metrics', (t) => {
-    const { agent, txn } = t.nr
-    assert.ok(txn.metrics instanceof Metrics, 'should have metrics')
-    assert.notEqual(
-      txn.metrics,
-      getMetrics(agent),
-      'should manage its own independent of the agent'
-    )
-    assert.equal(
+  t.test('with associated metrics', (t) => {
+    t.ok(txn.metrics instanceof Metrics, 'should have metrics')
+    t.not(txn.metrics, getMetrics(agent), 'should manage its own independent of the agent')
+    t.equal(
       getMetrics(agent).apdexT,
       txn.metrics.apdexT,
       'should have the same apdex threshold as the agent'
     )
-    assert.equal(
-      agent.mapper,
-      txn.metrics.mapper,
-      'should have the same metrics mapper as the agent'
-    )
+    t.equal(agent.mapper, txn.metrics.mapper, 'should have the same metrics mapper as the agent')
+    t.end()
   })
 
-  await t.test('web transactions', (t) => {
-    const { txn } = t.nr
+  t.test('web transactions', (t) => {
     txn.type = Transaction.TYPES.BG
-    assert.ok(!txn.isWeb(), 'should know when it is not a web transaction')
+    t.notOk(txn.isWeb(), 'should know when it is not a web transaction')
     txn.type = Transaction.TYPES.WEB
-    assert.ok(txn.isWeb(), 'should know when it is a web transaction')
+    t.ok(txn.isWeb(), 'should know when it is a web transaction')
+    t.end()
   })
 
-  await t.test('when dealing with individual metrics', (t, end) => {
-    const { agent } = t.nr
+  t.test('when dealing with individual metrics', (t) => {
     let tt = new Transaction(agent)
     tt.measure('Custom/Test01')
-    assert.ok(tt.metrics.getMetric('Custom/Test01'), 'should add metrics by name')
+    t.ok(tt.metrics.getMetric('Custom/Test01'), 'should add metrics by name')
 
     tt.end()
 
@@ -188,15 +171,12 @@ test('Transaction unit tests', async (t) => {
     tt.measure(TRACE_NAME, null, SLEEP_DURATION - 5)
 
     const statistics = tt.metrics.getMetric(TRACE_NAME)
-    assert.equal(
+    t.equal(
       statistics.callCount,
       2,
       'should allow multiple overlapping metric measurements for same name'
     )
-    assert.ok(
-      statistics.max > (SLEEP_DURATION - 1) / 1000,
-      'should measure at least 42 milliseconds'
-    )
+    t.ok(statistics.max > (SLEEP_DURATION - 1) / 1000, 'should measure at least 42 milliseconds')
 
     tt.end()
 
@@ -205,247 +185,246 @@ test('Transaction unit tests', async (t) => {
     tt.end()
 
     const metrics = tt.metrics.getMetric('Custom/Test16')
-    assert.equal(metrics.total, 0.065, 'should allow manual setting of metric durations')
+    t.equal(metrics.total, 0.065, 'should allow manual setting of metric durations')
 
-    end()
+    t.end()
   })
 
-  await t.test('when setting apdex for key transactions', (t) => {
-    const { txn } = t.nr
+  t.test('when setting apdex for key transactions', (t) => {
     txn._setApdex('Apdex/TestController/key', 1200, 667)
     const metric = txn.metrics.getMetric('Apdex/TestController/key')
 
-    assert.equal(metric.apdexT, 0.667, 'should set apdexT to the key transaction apdexT')
-    assert.equal(metric.satisfying, 0, 'should not have satisfied')
-    assert.equal(metric.tolerating, 1, 'should have been tolerated')
-    assert.equal(metric.frustrating, 0, 'should not have frustrated')
+    t.equal(metric.apdexT, 0.667, 'should set apdexT to the key transaction apdexT')
+    t.equal(metric.satisfying, 0, 'should not have satisfied')
+    t.equal(metric.tolerating, 1, 'should have been tolerated')
+    t.equal(metric.frustrating, 0, 'should not have frustrated')
 
     txn._setApdex('Apdex/TestController/another', 1200)
     const another = txn.metrics.getMetric('Apdex/TestController/another')
-    assert.equal(another.apdexT, 0.1, 'should not require a key transaction apdexT')
+    t.equal(another.apdexT, 0.1, 'should not require a key transaction apdexT')
+    t.end()
   })
 
-  await t.test('should ignore calculating apdex when ignoreApdex is true', (t) => {
-    const { txn } = t.nr
+  t.test('should ignore calculating apdex when ignoreApdex is true', (t) => {
     txn.ignoreApdex = true
     txn._setApdex('Apdex/TestController/key', 1200, 667)
     const metric = txn.metrics.getMetric('Apdex/TestController/key')
-    assert.ok(!metric)
+    t.notOk(metric)
+    t.end()
   })
 })
 
-test('Transaction naming tests', async (t) => {
-  function bookends(t) {
-    t.beforeEach((ctx) => {
-      ctx.nr = {}
-      ctx.nr.agent = helper.loadMockedAgent({
-        attributes: {
-          enabled: true,
-          include: ['request.parameters.*']
-        }
-      })
-      ctx.nr.agent.config.emit('attributes.include')
-      ctx.nr.txn = new Transaction(ctx.nr.agent)
+tap.test('Transaction naming tests', (t) => {
+  t.autoend()
+  let agent = null
+  let txn = null
+  function beforeEach() {
+    agent = helper.loadMockedAgent({
+      attributes: {
+        enabled: true,
+        include: ['request.parameters.*']
+      }
     })
-
-    t.afterEach((ctx) => {
-      helper.unloadAgent(ctx.nr.agent)
-    })
+    agent.config.emit('attributes.include')
+    txn = new Transaction(agent)
   }
 
-  await t.test('getName', async (t) => {
-    bookends(t)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+  })
 
-    await t.test('base test', (t) => {
-      const { txn } = t.nr
-      assert.equal(
-        txn.getName(),
-        null,
-        'should return `null` if there is no name, partialName, or url'
-      )
+  t.test('getName', (t) => {
+    t.autoend()
+    t.beforeEach(beforeEach)
+
+    t.test('base test', (t) => {
+      t.equal(txn.getName(), null, 'should return `null` if there is no name, partialName, or url')
+      t.end()
     })
 
-    await t.test('partial name should remain unset if it was not set before', (t) => {
-      const { txn } = t.nr
+    t.test('partial name should remain unset if it was not set before', (t) => {
       txn.url = '/some/pathname'
-      assert.equal(txn.nameState.getName(), null, 'should have no namestate')
-      assert.equal(txn.getName(), 'NormalizedUri/*', 'should have a default partial name')
-      assert.equal(txn.nameState.getName(), null, 'should still have no namestate')
+      t.equal(txn.nameState.getName(), null, 'should have no namestate')
+      t.equal(txn.getName(), 'NormalizedUri/*', 'should have a default partial name')
+      t.equal(txn.nameState.getName(), null, 'should still have no namestate')
+      t.end()
     })
 
-    await t.test('should return the right name if partialName and url are set', (t) => {
-      const { txn } = t.nr
+    t.test('should return the right name if partialName and url are set', (t) => {
       txn.nameState.setPrefix('Framework')
       txn.nameState.setVerb('verb')
       txn.nameState.appendPath('route')
       txn.url = '/route'
-      assert.equal(txn.getName(), 'WebFrameworkUri/Framework/VERB/route', 'should have full name')
-      assert.equal(txn.nameState.getName(), 'Framework/VERB/route', 'should have the partial name')
+      t.equal(txn.getName(), 'WebFrameworkUri/Framework/VERB/route', 'should have full name')
+      t.equal(txn.nameState.getName(), 'Framework/VERB/route', 'should have the partial name')
+      t.end()
     })
 
-    await t.test('should return the name if it has already been set', (t) => {
-      const { txn } = t.nr
+    t.test('should return the name if it has already been set', (t) => {
       txn.setPartialName('foo/bar')
-      assert.equal(txn.getName(), 'foo/bar', 'name should be as set')
+      t.equal(txn.getName(), 'foo/bar', 'name should be as set')
+      t.end()
     })
   })
 
-  await t.test('isIgnored', async (t) => {
-    bookends(t)
+  t.test('isIgnored', (t) => {
+    t.autoend()
+    t.beforeEach(beforeEach)
 
-    await t.test('should return true if a transaction is ignored by a rule', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should return true if a transaction is ignored by a rule', (t) => {
       const api = new API(agent)
       api.addIgnoringRule('^/test/')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.ok(txn.isIgnored(), 'should ignore the transaction')
+      t.ok(txn.isIgnored(), 'should ignore the transaction')
+      t.end()
     })
   })
 
-  await t.test('getFullName', async (t) => {
-    bookends(t)
+  t.test('getFullName', (t) => {
+    t.autoend()
+    t.beforeEach(beforeEach)
 
-    await t.test('should return null if it does not have name, partialName, or url', (t) => {
-      const { txn } = t.nr
-      assert.equal(txn.getFullName(), null, 'should not have a full name')
+    t.test('should return null if it does not have name, partialName, or url', (t) => {
+      t.equal(txn.getFullName(), null, 'should not have a full name')
+      t.end()
     })
 
-    await t.test('partial name should remain unset if it was not set before', (t) => {
-      const { txn } = t.nr
+    t.test('partial name should remain unset if it was not set before', (t) => {
       txn.url = '/some/pathname'
-      assert.equal(txn.nameState.getName(), null, 'should have no namestate')
-      assert.equal(
+      t.equal(txn.nameState.getName(), null, 'should have no namestate')
+      t.equal(
         txn.getFullName(),
         'WebTransaction/NormalizedUri/*',
         'should have a default full name'
       )
-      assert.equal(txn.nameState.getName(), null, 'should still have no namestate')
+      t.equal(txn.nameState.getName(), null, 'should still have no namestate')
+      t.end()
     })
 
-    await t.test('should return the right name if partialName and url are set', (t) => {
-      const { txn } = t.nr
+    t.test('should return the right name if partialName and url are set', (t) => {
       txn.nameState.setPrefix('Framework')
       txn.nameState.setVerb('verb')
       txn.nameState.appendPath('route')
       txn.url = '/route'
-      assert.equal(
+      t.equal(
         txn.getFullName(),
         'WebTransaction/WebFrameworkUri/Framework/VERB/route',
         'should have full name'
       )
-      assert.equal(txn.nameState.getName(), 'Framework/VERB/route', 'should have full name')
+      t.equal(txn.nameState.getName(), 'Framework/VERB/route', 'should have full name')
+      t.end()
     })
 
-    await t.test('should return the name if it has already been set', (t) => {
-      const { txn } = t.nr
+    t.test('should return the name if it has already been set', (t) => {
       txn.name = 'OtherTransaction/foo/bar'
-      assert.equal(txn.getFullName(), 'OtherTransaction/foo/bar')
+      t.equal(txn.getFullName(), 'OtherTransaction/foo/bar')
+      t.end()
     })
 
-    await t.test('should return the forced name if set', (t) => {
-      const { txn } = t.nr
+    t.test('should return the forced name if set', (t) => {
       txn.name = 'FullName'
       txn._partialName = 'PartialName'
       txn.forceName = 'ForcedName'
-      assert.equal(txn.getFullName(), 'WebTransaction/ForcedName')
+      t.equal(txn.getFullName(), 'WebTransaction/ForcedName')
+      t.end()
     })
   })
 
-  await t.test('with no partial name set', async (t) => {
-    bookends(t)
+  t.test('with no partial name set', (t) => {
+    t.autoend()
+    t.beforeEach(beforeEach)
 
-    await t.test('produces a normalized (backstopped) name when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('produces a normalized (backstopped) name when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.name, 'WebTransaction/NormalizedUri/*')
+      t.equal(txn.name, 'WebTransaction/NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('produces a normalized partial name when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('produces a normalized partial name when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn._partialName, 'NormalizedUri/*')
+      t.equal(txn._partialName, 'NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.statusCode, 200)
+      t.equal(txn.statusCode, 200)
+      t.end()
     })
 
-    await t.test('produces a non-error name when status code is ignored', (t) => {
-      const { agent, txn } = t.nr
+    t.test('produces a non-error name when status code is ignored', (t) => {
       agent.config.error_collector.ignore_status_codes = [404, 500]
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 500)
-      assert.equal(txn.name, 'WebTransaction/NormalizedUri/*')
+      t.equal(txn.name, 'WebTransaction/NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('produces a non-error partial name when status code is ignored', (t) => {
-      const { agent, txn } = t.nr
+    t.test('produces a non-error partial name when status code is ignored', (t) => {
       agent.config.error_collector.ignore_status_codes = [404, 500]
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 500)
-      assert.equal(txn._partialName, 'NormalizedUri/*')
+      t.equal(txn._partialName, 'NormalizedUri/*')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 404', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 404', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
-      assert.equal(txn.statusCode, 404)
+      t.equal(txn.statusCode, 404)
+      t.end()
     })
 
-    await t.test('produces a `not found` partial name when status is 404', (t) => {
-      const { txn } = t.nr
-      txn.nameState.setName('Expressjs', 'GET', '/')
-      txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
-      assert.equal(txn._partialName, 'Expressjs/GET/(not found)')
-    })
-
-    await t.test('produces a `not found` name when status is 404', (t) => {
-      const { txn } = t.nr
+    t.test('produces a `not found` partial name when status is 404', (t) => {
       txn.nameState.setName('Expressjs', 'GET', '/')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
-      assert.equal(txn.name, 'WebTransaction/Expressjs/GET/(not found)')
+      t.equal(txn._partialName, 'Expressjs/GET/(not found)')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 405', (t) => {
-      const { txn } = t.nr
+    t.test('produces a `not found` name when status is 404', (t) => {
+      txn.nameState.setName('Expressjs', 'GET', '/')
+      txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
+      t.equal(txn.name, 'WebTransaction/Expressjs/GET/(not found)')
+      t.end()
+    })
+
+    t.test('passes through status code when status is 405', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 405)
-      assert.equal(txn.statusCode, 405)
+      t.equal(txn.statusCode, 405)
+      t.end()
     })
 
-    await t.test('produces a `method not allowed` partial name when status is 405', (t) => {
-      const { txn } = t.nr
+    t.test('produces a `method not allowed` partial name when status is 405', (t) => {
       txn.nameState.setName('Expressjs', 'GET', '/')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 405)
-      assert.equal(txn._partialName, 'Expressjs/GET/(method not allowed)')
+      t.equal(txn._partialName, 'Expressjs/GET/(method not allowed)')
+      t.end()
     })
 
-    await t.test('produces a `method not allowed` name when status is 405', (t) => {
-      const { txn } = t.nr
+    t.test('produces a `method not allowed` name when status is 405', (t) => {
       txn.nameState.setName('Expressjs', 'GET', '/')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 405)
-      assert.equal(txn.name, 'WebTransaction/Expressjs/GET/(method not allowed)')
+      t.equal(txn.name, 'WebTransaction/Expressjs/GET/(method not allowed)')
+      t.end()
     })
 
-    await t.test('produces a name based on 501 status code message', (t) => {
-      const { txn } = t.nr
+    t.test('produces a name based on 501 status code message', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn.name, 'WebTransaction/WebFrameworkUri/(not implemented)')
+      t.equal(txn.name, 'WebTransaction/WebFrameworkUri/(not implemented)')
+      t.end()
     })
 
-    await t.test('produces a regular partial name based on 501 status code message', (t) => {
-      const { txn } = t.nr
+    t.test('produces a regular partial name based on 501 status code message', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn._partialName, 'WebFrameworkUri/(not implemented)')
+      t.equal(txn._partialName, 'WebFrameworkUri/(not implemented)')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 501', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 501', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn.statusCode, 501)
+      t.equal(txn.statusCode, 501)
+      t.end()
     })
 
-    await t.test('should update value from segment normalizer rules', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should update value from segment normalizer rules', (t) => {
       const url = 'NormalizedUri/test/explicit/string/lyrics'
       txn.forceName = url
       txn.url = url
@@ -453,121 +432,112 @@ test('Transaction naming tests', async (t) => {
         { prefix: 'WebTransaction/NormalizedUri', terms: ['test', 'string'] }
       ])
       txn.finalizeNameFromUri(url, 200)
-      assert.equal(txn.name, 'WebTransaction/NormalizedUri/test/*/string/*')
+      t.equal(txn.name, 'WebTransaction/NormalizedUri/test/*/string/*')
+      t.end()
     })
 
-    await t.test('should not scope web transactions to their URL', (t) => {
-      const { txn } = t.nr
+    t.test('should not scope web transactions to their URL', (t) => {
       txn.finalizeNameFromUri('/test/1337?action=edit', 200)
-      assert.notEqual(txn.name, '/test/1337?action=edit')
-      assert.notEqual(txn.name, 'WebTransaction/Uri/test/1337')
+      t.not(txn.name, '/test/1337?action=edit')
+      t.not(txn.name, 'WebTransaction/Uri/test/1337')
+      t.end()
     })
   })
 
-  await t.test('with a custom partial name set', async (t) => {
-    t.beforeEach((ctx) => {
-      ctx.nr = {}
-      ctx.nr.agent = helper.loadMockedAgent({
-        attributes: {
-          enabled: true,
-          include: ['request.parameters.*']
-        }
-      })
-      ctx.nr.agent.config.emit('attributes.include')
-      ctx.nr.txn = new Transaction(ctx.nr.agent)
-      ctx.nr.txn.nameState.setPrefix('Custom')
-      ctx.nr.txn.nameState.appendPath('test')
-      ctx.nr.agent.transactionNameNormalizer.rules = []
+  t.test('with a custom partial name set', (t) => {
+    t.autoend()
+
+    t.beforeEach(() => {
+      beforeEach()
+      txn.nameState.setPrefix('Custom')
+      txn.nameState.appendPath('test')
+      agent.transactionNameNormalizer.rules = []
     })
 
-    t.afterEach((ctx) => {
-      helper.unloadAgent(ctx.nr.agent)
-    })
-
-    await t.test('produces a custom name when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('produces a custom name when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.name, 'WebTransaction/Custom/test')
+      t.equal(txn.name, 'WebTransaction/Custom/test')
+      t.end()
     })
 
-    await t.test('produces a partial name when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('produces a partial name when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.nameState.getName(), 'Custom/test')
+      t.equal(txn.nameState.getName(), 'Custom/test')
+      t.end()
     })
 
-    await t.test('should rename a transaction when told to by a rule', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should rename a transaction when told to by a rule', (t) => {
       agent.transactionNameNormalizer.addSimple('^(WebTransaction/Custom)/test$', '$1/*')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.name, 'WebTransaction/Custom/*')
+      t.equal(txn.name, 'WebTransaction/Custom/*')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 200', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 200', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.equal(txn.statusCode, 200)
+      t.equal(txn.statusCode, 200)
+      t.end()
     })
 
-    await t.test('keeps the custom name when error status is ignored', (t) => {
-      const { agent, txn } = t.nr
+    t.test('keeps the custom name when error status is ignored', (t) => {
       agent.config.error_collector.ignore_status_codes = [404, 500]
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 500)
-      assert.equal(txn.name, 'WebTransaction/Custom/test')
+      t.equal(txn.name, 'WebTransaction/Custom/test')
+      t.end()
     })
 
-    await t.test('keeps the custom partial name when error status is ignored', (t) => {
-      const { txn } = t.nr
+    t.test('keeps the custom partial name when error status is ignored', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
-      assert.equal(txn.nameState.getName(), 'Custom/test')
+      t.equal(txn.nameState.getName(), 'Custom/test')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 404', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 404', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 404)
-      assert.equal(txn.statusCode, 404)
+      t.equal(txn.statusCode, 404)
+      t.end()
     })
 
-    await t.test('produces the custom name even when status is 501', (t) => {
-      const { txn } = t.nr
+    t.test('produces the custom name even when status is 501', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn.name, 'WebTransaction/Custom/test')
+      t.equal(txn.name, 'WebTransaction/Custom/test')
+      t.end()
     })
 
-    await t.test('produces the custom partial name even when status is 501', (t) => {
-      const { txn } = t.nr
+    t.test('produces the custom partial name even when status is 501', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn.nameState.getName(), 'Custom/test')
+      t.equal(txn.nameState.getName(), 'Custom/test')
+      t.end()
     })
 
-    await t.test('passes through status code when status is 501', (t) => {
-      const { txn } = t.nr
+    t.test('passes through status code when status is 501', (t) => {
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 501)
-      assert.equal(txn.statusCode, 501)
+      t.equal(txn.statusCode, 501)
+      t.end()
     })
 
-    await t.test('should ignore a transaction when told to by a rule', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should ignore a transaction when told to by a rule', (t) => {
       agent.transactionNameNormalizer.addSimple('^WebTransaction/Custom/test$')
       txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
-      assert.ok(txn.isIgnored())
+      t.ok(txn.isIgnored())
+      t.end()
     })
   })
 
-  await t.test('pathHashes', async (t) => {
-    bookends(t)
+  t.test('pathHashes', (t) => {
+    t.autoend()
+    t.beforeEach(beforeEach)
 
-    await t.test('should add up to 10 items to to pathHashes', (t) => {
-      const { txn } = t.nr
+    t.test('should add up to 10 items to to pathHashes', (t) => {
       const toAdd = ['1', '2', '3', '4', '4', '5', '6', '7', '8', '9', '10', '11']
       const expected = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1']
 
       toAdd.forEach(txn.pushPathHash.bind(txn))
-      assert.deepEqual(txn.pathHashes, expected)
+      t.same(txn.pathHashes, expected)
+      t.end()
     })
 
-    await t.test('should not include current pathHash in alternatePathHashes', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should not include current pathHash in alternatePathHashes', (t) => {
       txn.name = '/a/b/c'
       txn.referringPathHash = '/d/e/f'
 
@@ -578,15 +548,15 @@ test('Transaction naming tests', async (t) => {
       )
 
       txn.pathHashes = ['/a', curHash, '/a/b']
-      assert.equal(txn.alternatePathHashes(), '/a,/a/b')
+      t.equal(txn.alternatePathHashes(), '/a,/a/b')
       txn.nameState.setPrefix(txn.name)
       txn.name = null
       txn.pathHashes = ['/a', '/a/b']
-      assert.equal(txn.alternatePathHashes(), '/a,/a/b')
+      t.equal(txn.alternatePathHashes(), '/a,/a/b')
+      t.end()
     })
 
-    await t.test('should return null when no alternate pathHashes exist', (t) => {
-      const { agent, txn } = t.nr
+    t.test('should return null when no alternate pathHashes exist', (t) => {
       txn.nameState.setPrefix('/a/b/c')
       txn.referringPathHash = '/d/e/f'
 
@@ -597,65 +567,71 @@ test('Transaction naming tests', async (t) => {
       )
 
       txn.pathHashes = [curHash]
-      assert.equal(txn.alternatePathHashes(), null)
+      t.equal(txn.alternatePathHashes(), null)
       txn.pathHashes = []
-      assert.equal(txn.alternatePathHashes(), null)
+      t.equal(txn.alternatePathHashes(), null)
+      t.end()
     })
   })
 })
 
-test('Transaction methods', async (t) => {
+tap.test('Transaction methods', (t) => {
+  t.autoend()
+  let txn = null
+  let agent = null
+
   function bookends(t) {
-    t.beforeEach((ctx) => {
-      ctx.nr = {}
-      ctx.nr.agent = helper.loadMockedAgent()
-      ctx.nr.txn = new Transaction(ctx.nr.agent)
+    t.beforeEach(() => {
+      agent = helper.loadMockedAgent()
+      txn = new Transaction(agent)
     })
 
-    t.afterEach((ctx) => {
-      helper.unloadAgent(ctx.nr.agent)
+    t.afterEach(() => {
+      helper.unloadAgent(agent)
     })
   }
 
-  await t.test('hasErrors', async (t) => {
+  t.test('hasErrors', (t) => {
+    t.autoend()
     bookends(t)
 
-    await t.test('should return true if exceptions property is not empty', (t) => {
-      const { txn } = t.nr
-      assert.ok(!txn.hasErrors())
+    t.test('should return true if exceptions property is not empty', (t) => {
+      t.notOk(txn.hasErrors())
       txn.exceptions.push(new Error())
-      assert.ok(txn.hasErrors())
+      t.ok(txn.hasErrors())
+      t.end()
     })
 
-    await t.test('should return true if statusCode is an error', (t) => {
-      const { txn } = t.nr
+    t.test('should return true if statusCode is an error', (t) => {
       txn.statusCode = 500
-      assert.ok(txn.hasErrors())
+      t.ok(txn.hasErrors())
+      t.end()
     })
   })
 
-  await t.test('isSampled', async (t) => {
+  t.test('isSampled', (t) => {
+    t.autoend()
     bookends(t)
 
-    await t.test('should be true when the transaction is sampled', (t) => {
-      const { txn } = t.nr
+    t.test('should be true when the transaction is sampled', (t) => {
       // the first 10 transactions are sampled so this should be true
-      assert.ok(txn.isSampled())
+      t.ok(txn.isSampled())
+      t.end()
     })
 
-    await t.test('should be false when the transaction is not sampled', (t) => {
-      const { txn } = t.nr
+    t.test('should be false when the transaction is not sampled', (t) => {
       txn.priority = Infinity
       txn.sampled = false
-      assert.ok(!txn.isSampled())
+      t.notOk(txn.isSampled())
+      t.end()
     })
   })
 
-  await t.test('getIntrinsicAttributes', async (t) => {
+  t.test('getIntrinsicAttributes', (t) => {
+    t.autoend()
     bookends(t)
 
-    await t.test('includes CAT attributes when enabled', (t) => {
-      const { txn } = t.nr
+    t.test('includes CAT attributes when enabled', (t) => {
       txn.agent.config.cross_application_tracer.enabled = true
       txn.agent.config.distributed_tracing.enabled = false
       txn.tripId = '3456'
@@ -663,14 +639,14 @@ test('Transaction methods', async (t) => {
       txn.incomingCatId = '2345'
 
       const attributes = txn.getIntrinsicAttributes()
-      assert.equal(attributes.referring_transaction_guid, '1234')
-      assert.equal(attributes.client_cross_process_id, '2345')
-      assert.equal(typeof attributes.path_hash, 'string')
-      assert.equal(attributes.trip_id, '3456')
+      t.equal(attributes.referring_transaction_guid, '1234')
+      t.equal(attributes.client_cross_process_id, '2345')
+      t.type(attributes.path_hash, 'string')
+      t.equal(attributes.trip_id, '3456')
+      t.end()
     })
 
-    await t.test('includes Synthetics attributes', (t) => {
-      const { txn } = t.nr
+    t.test('includes Synthetics attributes', (t) => {
       txn.syntheticsData = {
         version: 1,
         accountId: 123,
@@ -680,13 +656,13 @@ test('Transaction methods', async (t) => {
       }
 
       const attributes = txn.getIntrinsicAttributes()
-      assert.equal(attributes.synthetics_resource_id, 'resId')
-      assert.equal(attributes.synthetics_job_id, 'jobId')
-      assert.equal(attributes.synthetics_monitor_id, 'monId')
+      t.equal(attributes.synthetics_resource_id, 'resId')
+      t.equal(attributes.synthetics_job_id, 'jobId')
+      t.equal(attributes.synthetics_monitor_id, 'monId')
+      t.end()
     })
 
-    await t.test('includes Synthetics Info attributes', (t) => {
-      const { txn } = t.nr
+    t.test('includes Synthetics Info attributes', (t) => {
       // spec states must be present too
       txn.syntheticsData = {}
       txn.syntheticsInfoData = {
@@ -701,35 +677,38 @@ test('Transaction methods', async (t) => {
       }
 
       const attributes = txn.getIntrinsicAttributes()
-      assert.equal(attributes.synthetics_type, 'unitTest')
-      assert.equal(attributes.synthetics_initiator, 'cli')
-      assert.equal(attributes.synthetics_attr_test, 'value')
-      assert.equal(attributes.synthetics_attr_2_test, 'value1')
-      assert.equal(attributes.synthetics_x_test_header, 'value2')
+      t.equal(attributes.synthetics_type, 'unitTest')
+      t.equal(attributes.synthetics_initiator, 'cli')
+      t.equal(attributes.synthetics_attr_test, 'value')
+      t.equal(attributes.synthetics_attr_2_test, 'value1')
+      t.equal(attributes.synthetics_x_test_header, 'value2')
+      t.end()
     })
 
-    await t.test('returns different object every time', (t) => {
-      const { txn } = t.nr
-      assert.notEqual(txn.getIntrinsicAttributes(), txn.getIntrinsicAttributes())
+    t.test('returns different object every time', (t) => {
+      t.not(txn.getIntrinsicAttributes(), txn.getIntrinsicAttributes())
+      t.end()
     })
 
-    await t.test('includes distributed trace attributes', (t) => {
-      const { txn } = t.nr
+    t.test('includes distributed trace attributes', (t) => {
       const attributes = txn.getIntrinsicAttributes()
+      t.ok(txn.priority.toString().length <= 8)
 
-      assert.ok(txn.priority.toString().length <= 8)
-      assert.equal(attributes.guid, txn.id)
-      assert.equal(attributes.traceId, txn.traceId)
-      assert.equal(attributes.priority, txn.priority)
-      assert.equal(attributes.sampled, true)
+      t.has(attributes, {
+        guid: txn.id,
+        traceId: txn.traceId,
+        priority: txn.priority,
+        sampled: true
+      })
+      t.end()
     })
   })
 
-  await t.test('getResponseDurationInMillis', async (t) => {
+  t.test('getResponseDurationInMillis', (t) => {
+    t.autoend()
     bookends(t)
 
-    await t.test('for web transactions', (t) => {
-      const { txn } = t.nr
+    t.test('for web transactions', (t) => {
       txn.url = 'someUrl'
 
       // add a segment that will end after the txn ends
@@ -740,15 +719,15 @@ test('Transaction methods', async (t) => {
       childSegment.end()
 
       // response time should equal the transaction timer duration
-      assert.equal(
+      t.equal(
         txn.getResponseTimeInMillis(),
         txn.timer.getDurationInMillis(),
         'should use the time until transaction.end() is called'
       )
+      t.end()
     })
 
-    await t.test('for background transactions', (t) => {
-      const { txn } = t.nr
+    t.test('for background transactions', (t) => {
       // add a segment that will end after the transaction ends
       txn.type = Transaction.TYPES.BG
       const bgTransactionSegment = txn.trace.add('backgroundWork')
@@ -758,19 +737,23 @@ test('Transaction methods', async (t) => {
       bgTransactionSegment.end()
 
       // response time should equal the full duration of the trace
-      assert.equal(
+      t.equal(
         txn.getResponseTimeInMillis(),
         txn.trace.getDurationInMillis(),
         'should report response time equal to trace duration'
       )
+      t.end()
     })
   })
 })
 
-test('_acceptDistributedTracePayload', async (t) => {
-  t.beforeEach(function (ctx) {
-    ctx.nr = {}
-    const agent = helper.loadMockedAgent({
+tap.test('_acceptDistributedTracePayload', (t) => {
+  t.autoend()
+  let txn = null
+  let agent = null
+
+  t.beforeEach(function () {
+    agent = helper.loadMockedAgent({
       distributed_tracing: { enabled: true }
     })
     agent.config.trusted_account_key = '1'
@@ -780,55 +763,53 @@ test('_acceptDistributedTracePayload', async (t) => {
 
     agent.recordSupportability = sinon.spy()
 
-    ctx.nr.agent = agent
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    txn = new Transaction(agent)
   })
 
-  t.afterEach(function (ctx) {
-    helper.unloadAgent(ctx.nr.agent)
-    ctx.nr.agent = null
+  t.afterEach(function () {
+    helper.unloadAgent(agent)
+    agent = null
   })
 
-  await t.test('records supportability metric if no payload was passed', (t) => {
-    const { txn } = t.nr
+  t.test('records supportability metric if no payload was passed', (t) => {
     txn._acceptDistributedTracePayload(null)
-    assert.equal(
+    t.equal(
       txn.agent.recordSupportability.args[0][0],
       'DistributedTrace/AcceptPayload/Ignored/Null'
     )
+    t.end()
   })
 
-  await t.test(
+  t.test(
     'when already marked as distributed trace, records `Multiple` supportability metric if parentId exists',
     (t) => {
-      const { txn } = t.nr
       txn.isDistributedTrace = true
       txn.parentId = 'exists'
 
       txn._acceptDistributedTracePayload({})
-      assert.equal(
+      t.equal(
         txn.agent.recordSupportability.args[0][0],
         'DistributedTrace/AcceptPayload/Ignored/Multiple'
       )
+      t.end()
     }
   )
 
-  await t.test(
+  t.test(
     'when already marked as distributed trace, records `CreateBeforeAccept` metric if parentId does not exist',
     (t) => {
-      const { txn } = t.nr
       txn.isDistributedTrace = true
 
       txn._acceptDistributedTracePayload({})
-      assert.equal(
+      t.equal(
         txn.agent.recordSupportability.args[0][0],
         'DistributedTrace/AcceptPayload/Ignored/CreateBeforeAccept'
       )
+      t.end()
     }
   )
 
-  await t.test('should not accept payload if no configured trusted key', (t) => {
-    const { txn } = t.nr
+  t.test('should not accept payload if no configured trusted key', (t) => {
     txn.agent.config.trusted_account_key = null
     txn.agent.config.account_id = null
 
@@ -843,15 +824,12 @@ test('_acceptDistributedTracePayload', async (t) => {
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
 
-    assert.equal(
-      txn.agent.recordSupportability.args[0][0],
-      'DistributedTrace/AcceptPayload/Exception'
-    )
-    assert.ok(!txn.isDistributedTrace)
+    t.equal(txn.agent.recordSupportability.args[0][0], 'DistributedTrace/AcceptPayload/Exception')
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('should not accept payload if DT disabled', (t) => {
-    const { txn } = t.nr
+  t.test('should not accept payload if DT disabled', (t) => {
     txn.agent.config.distributed_tracing.enabled = false
 
     const data = {
@@ -865,15 +843,12 @@ test('_acceptDistributedTracePayload', async (t) => {
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
 
-    assert.equal(
-      txn.agent.recordSupportability.args[0][0],
-      'DistributedTrace/AcceptPayload/Exception'
-    )
-    assert.ok(!txn.isDistributedTrace)
+    t.equal(txn.agent.recordSupportability.args[0][0], 'DistributedTrace/AcceptPayload/Exception')
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('should accept payload if config valid and CAT disabled', (t) => {
-    const { txn } = t.nr
+  t.test('should accept payload if config valid and CAT disabled', (t) => {
     txn.agent.config.cross_application_tracer.enabled = false
 
     const data = {
@@ -887,21 +862,21 @@ test('_acceptDistributedTracePayload', async (t) => {
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
 
-    assert.ok(txn.isDistributedTrace)
+    t.ok(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('fails if payload version is above agent-supported version', (t) => {
-    const { txn } = t.nr
+  t.test('fails if payload version is above agent-supported version', (t) => {
     txn._acceptDistributedTracePayload({ v: [1, 0] })
-    assert.equal(
+    t.equal(
       txn.agent.recordSupportability.args[0][0],
       'DistributedTrace/AcceptPayload/ParseException'
     )
-    assert.ok(!txn.isDistributedTrace)
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('fails if payload account id is not in trusted ids', (t) => {
-    const { txn } = t.nr
+  t.test('fails if payload account id is not in trusted ids', (t) => {
     const data = {
       ac: 2,
       ty: 'App',
@@ -915,30 +890,30 @@ test('_acceptDistributedTracePayload', async (t) => {
       v: [0, 1],
       d: data
     })
-    assert.equal(
+    t.equal(
       txn.agent.recordSupportability.args[0][0],
       'DistributedTrace/AcceptPayload/Ignored/UntrustedAccount'
     )
-    assert.ok(!txn.isDistributedTrace)
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('fails if payload data is missing required keys', (t) => {
-    const { txn } = t.nr
+  t.test('fails if payload data is missing required keys', (t) => {
     txn._acceptDistributedTracePayload({
       v: [0, 1],
       d: {
         ac: 1
       }
     })
-    assert.equal(
+    t.equal(
       txn.agent.recordSupportability.args[0][0],
       'DistributedTrace/AcceptPayload/ParseException'
     )
-    assert.ok(!txn.isDistributedTrace)
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('takes the priority and sampled state from the incoming payload', (t) => {
-    const { txn } = t.nr
+  t.test('takes the priority and sampled state from the incoming payload', (t) => {
     const data = {
       ac: '1',
       ty: 'App',
@@ -951,14 +926,14 @@ test('_acceptDistributedTracePayload', async (t) => {
     }
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
-    assert.ok(txn.sampled)
-    assert.equal(txn.priority, data.pr)
+    t.ok(txn.sampled)
+    t.equal(txn.priority, data.pr)
     // Should not truncate accepted priority
-    assert.equal(txn.priority.toString().length, 9)
+    t.equal(txn.priority.toString().length, 9)
+    t.end()
   })
 
-  await t.test('does not take the distributed tracing data if priority is missing', (t) => {
-    const { txn } = t.nr
+  t.test('does not take the distributed tracing data if priority is missing', (t) => {
     const data = {
       ac: 1,
       ty: 'App',
@@ -970,12 +945,12 @@ test('_acceptDistributedTracePayload', async (t) => {
     }
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
-    assert.equal(txn.priority, null)
-    assert.equal(txn.sampled, null)
+    t.equal(txn.priority, null)
+    t.equal(txn.sampled, null)
+    t.end()
   })
 
-  await t.test('stores payload props on transaction', (t) => {
-    const { txn } = t.nr
+  t.test('stores payload props on transaction', (t) => {
     const data = {
       ac: '1',
       ty: 'App',
@@ -986,19 +961,16 @@ test('_acceptDistributedTracePayload', async (t) => {
     }
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
-    assert.equal(
-      txn.agent.recordSupportability.args[0][0],
-      'DistributedTrace/AcceptPayload/Success'
-    )
-    assert.equal(txn.parentId, data.tx)
-    assert.equal(txn.parentType, data.ty)
-    assert.equal(txn.traceId, data.tr)
-    assert.ok(txn.isDistributedTrace)
-    assert.ok(txn.parentTransportDuration > 0)
+    t.equal(txn.agent.recordSupportability.args[0][0], 'DistributedTrace/AcceptPayload/Success')
+    t.equal(txn.parentId, data.tx)
+    t.equal(txn.parentType, data.ty)
+    t.equal(txn.traceId, data.tr)
+    t.ok(txn.isDistributedTrace)
+    t.ok(txn.parentTransportDuration > 0)
+    t.end()
   })
 
-  await t.test('should 0 transport duration when receiving payloads from the future', (t) => {
-    const { txn } = t.nr
+  t.test('should 0 transport duration when receiving payloads from the future', (t) => {
     const data = {
       ac: '1',
       ty: 'App',
@@ -1010,77 +982,85 @@ test('_acceptDistributedTracePayload', async (t) => {
     }
 
     txn._acceptDistributedTracePayload({ v: [0, 1], d: data })
-    assert.equal(
-      txn.agent.recordSupportability.args[0][0],
-      'DistributedTrace/AcceptPayload/Success'
-    )
-    assert.equal(txn.parentId, data.tx)
-    assert.equal(txn.parentSpanId, txn.trace.root.id)
-    assert.equal(txn.parentType, data.ty)
-    assert.equal(txn.traceId, data.tr)
-    assert.ok(txn.isDistributedTrace)
-    assert.equal(txn.parentTransportDuration, 0)
+    t.equal(txn.agent.recordSupportability.args[0][0], 'DistributedTrace/AcceptPayload/Success')
+    t.equal(txn.parentId, data.tx)
+    t.equal(txn.parentSpanId, txn.trace.root.id)
+    t.equal(txn.parentType, data.ty)
+    t.equal(txn.traceId, data.tr)
+    t.ok(txn.isDistributedTrace)
+    t.equal(txn.parentTransportDuration, 0)
+    t.end()
   })
+  t.end()
 })
 
-test('_getParsedPayload', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    const agent = helper.loadMockedAgent({
+tap.test('_getParsedPayload', (t) => {
+  t.autoend()
+
+  let txn = null
+  let agent = null
+  let payload = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       distributed_tracing: { enabled: true }
     })
 
     agent.recordSupportability = sinon.spy()
-    ctx.nr.agent = agent
-    ctx.nr.txn = new Transaction(agent)
-    ctx.nr.payload = JSON.stringify({
+    txn = new Transaction(agent)
+    payload = JSON.stringify({
       test: 'payload'
     })
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
-    ctx.nr.agent = null
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+    agent = null
   })
 
-  await t.test('returns parsed JSON object', (t) => {
-    const { txn, payload } = t.nr
+  t.test('returns parsed JSON object', (t) => {
     const res = txn._getParsedPayload(payload)
-    assert.deepEqual(res, { test: 'payload' })
+    t.same(res, { test: 'payload' })
+    t.end()
   })
 
-  await t.test('returns parsed object from base64 string', (t) => {
-    const { txn, payload } = t.nr
+  t.test('returns parsed object from base64 string', (t) => {
     txn.agent.config.encoding_key = 'test'
 
     const res = txn._getParsedPayload(payload.toString('base64'))
-    assert.deepEqual(res, { test: 'payload' })
+    t.same(res, { test: 'payload' })
+    t.end()
   })
 
-  await t.test('returns null if string is invalid JSON', (t) => {
-    const { txn } = t.nr
+  t.test('returns null if string is invalid JSON', (t) => {
     const res = txn._getParsedPayload('{invalid JSON string}')
-    assert.equal(res, null)
-    assert.equal(
+    t.equal(res, null)
+    t.equal(
       txn.agent.recordSupportability.args[0][0],
       'DistributedTrace/AcceptPayload/ParseException'
     )
+    t.end()
   })
 
-  await t.test('returns null if decoding fails', (t) => {
-    const { txn, payload } = t.nr
+  t.test('returns null if decoding fails', (t) => {
     txn.agent.config.encoding_key = 'test'
-    const newPayload = hashes.obfuscateNameUsingKey(payload, 'some other key')
+    payload = hashes.obfuscateNameUsingKey(payload, 'some other key')
 
-    const res = txn._getParsedPayload(newPayload)
-    assert.equal(res, null)
+    const res = txn._getParsedPayload(payload)
+    t.equal(res, null)
+    t.end()
   })
 })
 
-test('_createDistributedTracePayload', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    const agent = helper.loadMockedAgent({
+tap.test('_createDistributedTracePayload', (t) => {
+  t.autoend()
+
+  let txn = null
+  let agent = null
+  let contextManager = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       distributed_tracing: { enabled: true }
     })
 
@@ -1093,104 +1073,104 @@ test('_createDistributedTracePayload', async (t) => {
     agent.config.cross_process_id = null
     agent.config.trusted_account_ids = null
 
-    ctx.nr.agent = agent
-    ctx.nr.contextManager = helper.getContextManager()
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    contextManager = helper.getContextManager()
+    txn = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+    agent = null
   })
 
-  await t.test('should not create payload when DT disabled', (t) => {
-    const { txn } = t.nr
+  t.test('should not create payload when DT disabled', (t) => {
     txn.agent.config.distributed_tracing.enabled = false
 
     const payload = txn._createDistributedTracePayload().text()
-    assert.equal(payload, '')
-    assert.equal(txn.agent.recordSupportability.callCount, 0)
-    assert.ok(!txn.isDistributedTrace)
+    t.equal(payload, '')
+    t.equal(txn.agent.recordSupportability.callCount, 0)
+    t.notOk(txn.isDistributedTrace)
+    t.end()
   })
 
-  await t.test('should create payload when DT enabled and CAT disabled', (t) => {
-    const { txn } = t.nr
+  t.test('should create payload when DT enabled and CAT disabled', (t) => {
     txn.agent.config.cross_application_tracer.enabled = false
 
     const payload = txn._createDistributedTracePayload().text()
 
-    assert.notEqual(payload, null)
-    assert.notEqual(payload, '')
+    t.not(payload, null)
+    t.not(payload, '')
+    t.end()
   })
 
-  await t.test('does not change existing priority', (t) => {
-    const { txn } = t.nr
+  t.test('does not change existing priority', (t) => {
     txn.priority = 999
     txn.sampled = false
 
     txn._createDistributedTracePayload()
 
-    assert.equal(txn.priority, 999)
-    assert.ok(!txn.sampled)
+    t.equal(txn.priority, 999)
+    t.notOk(txn.sampled)
+    t.end()
   })
 
-  await t.test('sets the transaction as sampled if the trace is chosen', (t) => {
-    const { txn } = t.nr
+  t.test('sets the transaction as sampled if the trace is chosen', (t) => {
     const payload = JSON.parse(txn._createDistributedTracePayload().text())
-    assert.equal(payload.d.sa, txn.sampled)
-    assert.equal(payload.d.pr, txn.priority)
+    t.equal(payload.d.sa, txn.sampled)
+    t.equal(payload.d.pr, txn.priority)
+    t.end()
   })
 
-  await t.test('adds the current span id as the parent span id', (t) => {
-    const { agent, txn, contextManager } = t.nr
+  t.test('adds the current span id as the parent span id', (t) => {
     agent.config.span_events.enabled = true
     contextManager.setContext(txn.trace.root)
     txn.sampled = true
     const payload = JSON.parse(txn._createDistributedTracePayload().text())
-    assert.equal(payload.d.id, txn.trace.root.id)
+    t.equal(payload.d.id, txn.trace.root.id)
     contextManager.setContext(null)
     agent.config.span_events.enabled = false
+    t.end()
   })
 
-  await t.test('does not add the span id if the transaction is not sampled', (t) => {
-    const { agent, txn, contextManager } = t.nr
+  t.test('does not add the span id if the transaction is not sampled', (t) => {
     agent.config.span_events.enabled = true
     txn._calculatePriority()
     txn.sampled = false
     contextManager.setContext(txn.trace.root)
     const payload = JSON.parse(txn._createDistributedTracePayload().text())
-    assert.equal(payload.d.id, undefined)
+    t.equal(payload.d.id, undefined)
     contextManager.setContext(null)
     agent.config.span_events.enabled = false
+    t.end()
   })
 
-  await t.test('returns stringified payload object', (t) => {
-    const { txn } = t.nr
+  t.test('returns stringified payload object', (t) => {
     const payload = txn._createDistributedTracePayload().text()
-    assert.equal(typeof payload, 'string')
-    assert.equal(
-      txn.agent.recordSupportability.args[0][0],
-      'DistributedTrace/CreatePayload/Success'
-    )
-    assert.ok(txn.isDistributedTrace)
+    t.type(payload, 'string')
+    t.equal(txn.agent.recordSupportability.args[0][0], 'DistributedTrace/CreatePayload/Success')
+    t.ok(txn.isDistributedTrace)
+    t.end()
   })
 })
 
-test('acceptDistributedTraceHeaders', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('acceptDistributedTraceHeaders', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       distributed_tracing: { enabled: true },
       span_events: { enabled: true }
     })
-    ctx.nr.agent.config.trusted_account_key = '1'
+    agent.config.trusted_account_key = '1'
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+    agent = null
   })
 
-  await t.test('should accept a valid trace context traceparent header', (t, end) => {
-    const { agent } = t.nr
+  t.test('should accept a valid trace context traceparent header', (t) => {
     const goodParent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00'
 
     const headers = {
@@ -1203,16 +1183,15 @@ test('acceptDistributedTraceHeaders', async (t) => {
 
       txn.acceptDistributedTraceHeaders('HTTP', headers)
 
-      assert.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
-      assert.equal(txn.parentSpanId, '00f067aa0ba902b7')
+      t.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
+      t.equal(txn.parentSpanId, '00f067aa0ba902b7')
 
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should not accept invalid trace context traceparent header', (t, end) => {
-    const { agent } = t.nr
+  t.test('should not accept invalid trace context traceparent header', (t) => {
     helper.runInTransaction(agent, function (txn) {
       const childSegment = txn.trace.add('child')
       childSegment.start()
@@ -1232,14 +1211,13 @@ test('acceptDistributedTraceHeaders', async (t) => {
 
       const secondHeaders = createHeadersAndInsertTrace(txn)
 
-      assert.equal(secondHeaders.traceparent, origTraceparent)
+      t.equal(secondHeaders.traceparent, origTraceparent)
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should use newrelic format when no traceparent', (t, end) => {
-    const { agent } = t.nr
+  t.test('should use newrelic format when no traceparent', (t) => {
     const trustedAccountKey = '123'
     agent.config.trusted_account_key = trustedAccountKey
 
@@ -1271,21 +1249,20 @@ test('acceptDistributedTraceHeaders', async (t) => {
 
       txn.acceptDistributedTraceHeaders('HTTP', headers)
 
-      assert.ok(txn.isDistributedTrace)
-      assert.ok(txn.acceptedDistributedTrace)
+      t.ok(txn.isDistributedTrace)
+      t.ok(txn.acceptedDistributedTrace)
 
       const outboundHeaders = createHeadersAndInsertTrace(txn)
       const splitData = outboundHeaders.traceparent.split('-')
       const [, traceId] = splitData
 
-      assert.equal(traceId, expectedTraceId)
+      t.equal(traceId, expectedTraceId)
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should not throw error when headers is a string', (t, end) => {
-    const { agent } = t.nr
+  t.test('should not throw error when headers is a string', (t) => {
     const trustedAccountKey = '123'
     agent.config.trusted_account_key = trustedAccountKey
 
@@ -1295,20 +1272,19 @@ test('acceptDistributedTraceHeaders', async (t) => {
 
       const headers = 'JUST A STRING'
 
-      assert.doesNotThrow(function () {
+      t.doesNotThrow(function () {
         txn.acceptDistributedTraceHeaders('HTTP', headers)
       })
 
-      assert.equal(txn.isDistributedTrace, null)
-      assert.equal(txn.acceptedDistributedTrace, null)
+      t.equal(txn.isDistributedTrace, null)
+      t.equal(txn.acceptedDistributedTrace, null)
 
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should only accept the first tracecontext', (t, end) => {
-    const { agent } = t.nr
+  t.test('should only accept the first tracecontext', (t) => {
     const expectedTraceId = 'da8bc8cc6d062849b0efcf3c169afb5a'
     const expectedParentSpanId = '7d3efb1b173fecfa'
     const expectedAppId = '2827902'
@@ -1330,17 +1306,16 @@ test('acceptDistributedTraceHeaders', async (t) => {
       txn.acceptDistributedTraceHeaders('HTTP', firstTraceContext)
       txn.acceptDistributedTraceHeaders('HTTP', secondTraceContext)
 
-      assert.equal(txn.traceId, expectedTraceId)
-      assert.equal(txn.parentSpanId, expectedParentSpanId)
-      assert.equal(txn.parentApp, '2827902')
+      t.equal(txn.traceId, expectedTraceId)
+      t.equal(txn.parentSpanId, expectedParentSpanId)
+      t.equal(txn.parentApp, '2827902')
 
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should not accept tracecontext after sending a trace', (t, end) => {
-    const { agent } = t.nr
+  t.test('should not accept tracecontext after sending a trace', (t) => {
     const unexpectedTraceId = 'da8bc8cc6d062849b0efcf3c169afb5a'
     const unexpectedParentSpanId = '7d3efb1b173fecfa'
     const unexpectedAppId = '2827902'
@@ -1359,36 +1334,39 @@ test('acceptDistributedTraceHeaders', async (t) => {
 
       txn.acceptDistributedTraceHeaders('HTTP', firstTraceContext)
 
-      assert.notEqual(txn.traceId, unexpectedTraceId)
-      assert.notEqual(txn.parentSpanId, unexpectedParentSpanId)
-      assert.notEqual(txn.parentApp, '2827902')
+      t.not(txn.traceId, unexpectedTraceId)
+      t.not(txn.parentSpanId, unexpectedParentSpanId)
+      t.not(txn.parentApp, '2827902')
 
       const traceparentParts = outboundHeaders.traceparent.split('-')
       const [, expectedTraceId] = traceparentParts
 
-      assert.equal(txn.traceId, expectedTraceId)
+      t.equal(txn.traceId, expectedTraceId)
 
       txn.end()
-      end()
+      t.end()
     })
   })
 })
 
-test('insertDistributedTraceHeaders', async (t) => {
-  t.beforeEach(function (ctx) {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
-    ctx.nr.contextManager = helper.getContextManager()
+tap.test('insertDistributedTraceHeaders', (t) => {
+  t.autoend()
+
+  let agent = null
+  let contextManager = null
+
+  t.beforeEach(function () {
+    agent = helper.loadMockedAgent()
+    contextManager = helper.getContextManager()
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test(
-    'should lowercase traceId for tracecontext when received upper from newrelic format',
-    (t, end) => {
-      const { agent } = t.nr
+  t.test(
+    'should lowercase traceId for tracecontext when recieved upper from newrelic format',
+    (t) => {
       const trustedAccountKey = '123'
 
       agent.config.account_id = 'AccountId1'
@@ -1425,8 +1403,8 @@ test('insertDistributedTraceHeaders', async (t) => {
 
         txn.acceptDistributedTraceHeaders('HTTP', headers)
 
-        assert.ok(txn.isDistributedTrace)
-        assert.ok(txn.acceptedDistributedTrace)
+        t.ok(txn.isDistributedTrace)
+        t.ok(txn.acceptedDistributedTrace)
 
         const insertedHeaders = {}
         txn.insertDistributedTraceHeaders(insertedHeaders)
@@ -1434,25 +1412,24 @@ test('insertDistributedTraceHeaders', async (t) => {
         const splitData = insertedHeaders.traceparent.split('-')
         const [, traceId] = splitData
 
-        assert.equal(traceId, expectedTraceContextTraceId)
+        t.equal(traceId, expectedTraceContextTraceId)
 
         const rawPayload = Buffer.from(insertedHeaders.newrelic, 'base64').toString('utf-8')
         const payload = JSON.parse(rawPayload)
 
         // newrelic header should have traceId untouched
-        assert.equal(payload.d.tr, incomingTraceId)
+        t.equal(payload.d.tr, incomingTraceId)
 
         // traceId used for metrics shoudl go untouched
-        assert.equal(txn.traceId, incomingTraceId)
+        t.equal(txn.traceId, incomingTraceId)
 
         txn.end()
-        end()
+        t.end()
       })
     }
   )
 
-  await t.test('should generate a valid new trace context traceparent header', (t) => {
-    const { agent, contextManager } = t.nr
+  t.test('should generate a valid new trace context traceparent header', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = true
@@ -1467,18 +1444,19 @@ test('insertDistributedTraceHeaders', async (t) => {
 
     const lowercaseHexRegex = /^[a-f0-9]+/
 
-    assert.equal(traceparentParts.length, 4)
-    assert.equal(traceparentParts[0], '00', 'version matches')
-    assert.equal(traceparentParts[1].length, 32, 'traceId of length 32')
-    assert.equal(traceparentParts[2].length, 16, 'parentId of length 16')
-    assert.equal(traceparentParts[3], '01', 'flags match')
+    t.equal(traceparentParts.length, 4)
+    t.equal(traceparentParts[0], '00', 'version matches')
+    t.equal(traceparentParts[1].length, 32, 'traceId of length 32')
+    t.equal(traceparentParts[2].length, 16, 'parentId of length 16')
+    t.equal(traceparentParts[3], '01', 'flags match')
 
-    match(traceparentParts[1], lowercaseHexRegex, 'traceId is lowercase hex')
-    match(traceparentParts[2], lowercaseHexRegex, 'parentId is lowercase hex')
+    t.match(traceparentParts[1], lowercaseHexRegex, 'traceId is lowercase hex')
+    t.match(traceparentParts[2], lowercaseHexRegex, 'parentId is lowercase hex')
+
+    t.end()
   })
 
-  await t.test('should generate new parentId when spans_events disabled', (t) => {
-    const { agent, contextManager } = t.nr
+  t.test('should generate new parentId when spans_events disabled', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = false
@@ -1492,13 +1470,13 @@ test('insertDistributedTraceHeaders', async (t) => {
     const traceparent = outboundHeaders.traceparent
     const traceparentParts = traceparent.split('-')
 
-    assert.equal(traceparentParts[2].length, 16, 'parentId has length 16')
+    t.equal(traceparentParts[2].length, 16, 'parentId has length 16')
 
-    match(traceparentParts[2], lowercaseHexRegex, 'parentId is lowercase hex')
+    t.match(traceparentParts[2], lowercaseHexRegex, 'parentId is lowercase hex')
+    t.end()
   })
 
-  await t.test('should set traceparent sample part to 01 for sampled transaction', (t) => {
-    const { agent, contextManager } = t.nr
+  t.test('should set traceparent sample part to 01 for sampled transaction', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = true
@@ -1512,11 +1490,12 @@ test('insertDistributedTraceHeaders', async (t) => {
     const traceparent = outboundHeaders.traceparent
     const traceparentParts = traceparent.split('-')
 
-    assert.equal(traceparentParts[3], '01', 'flags match')
+    t.equal(traceparentParts[3], '01', 'flags match')
+
+    t.end()
   })
 
-  await t.test('should set traceparent traceid if traceparent exists on transaction', (t) => {
-    const { agent, contextManager } = t.nr
+  t.test('should set traceparent traceid if traceparent exists on transaction', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = true
@@ -1532,35 +1511,39 @@ test('insertDistributedTraceHeaders', async (t) => {
     const outboundHeaders = createHeadersAndInsertTrace(txn)
     const traceparentParts = outboundHeaders.traceparent.split('-')
 
-    assert.equal(traceparentParts[1], '4bf92f3577b34da6a3ce929d0e0e4736', 'traceId matches')
+    t.equal(traceparentParts[1], '4bf92f3577b34da6a3ce929d0e0e4736', 'traceId matches')
+
+    t.end()
   })
 
-  await t.test('generates a priority for entry-point transactions', (t) => {
-    const { agent } = t.nr
+  t.test('generates a priority for entry-point transactions', (t) => {
     const txn = new Transaction(agent)
 
-    assert.equal(txn.priority, null)
-    assert.equal(txn.sampled, null)
+    t.equal(txn.priority, null)
+    t.equal(txn.sampled, null)
 
     txn.insertDistributedTraceHeaders({})
 
-    assert.equal(typeof txn.priority, 'number')
-    assert.equal(typeof txn.sampled, 'boolean')
+    t.type(txn.priority, 'number')
+    t.type(txn.sampled, 'boolean')
+    t.end()
   })
 })
 
-test('acceptTraceContextPayload', async (t) => {
-  t.beforeEach(function (ctx) {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
+tap.test('acceptTraceContextPayload', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(function () {
+    agent = helper.loadMockedAgent()
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test('should accept a valid trace context traceparent header', (t, end) => {
-    const { agent } = t.nr
+  t.test('should accept a valid trace context traceparent header', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = true
@@ -1573,16 +1556,15 @@ test('acceptTraceContextPayload', async (t) => {
 
       txn.acceptTraceContextPayload(goodParent, 'stuff')
 
-      assert.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
-      assert.equal(txn.parentSpanId, '00f067aa0ba902b7')
+      t.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
+      t.equal(txn.parentSpanId, '00f067aa0ba902b7')
 
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should not accept invalid trace context traceparent header', (t, end) => {
-    const { agent } = t.nr
+  t.test('should not accept invalid trace context traceparent header', (t) => {
     agent.config.distributed_tracing.enabled = true
     agent.config.trusted_account_key = '1'
     agent.config.span_events.enabled = true
@@ -1600,14 +1582,13 @@ test('acceptTraceContextPayload', async (t) => {
 
       const secondHeaders = createHeadersAndInsertTrace(txn)
 
-      assert.equal(secondHeaders.traceparent, origTraceparent)
+      t.equal(secondHeaders.traceparent, origTraceparent)
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should not accept tracestate when trusted_account_key missing', (t, end) => {
-    const { agent } = t.nr
+  t.test('should not accept tracestate when trusted_account_key missing', (t) => {
     agent.config.trusted_account_key = null
     agent.config.distributed_tracing.enabled = true
     agent.config.span_events.enabled = true
@@ -1624,22 +1605,21 @@ test('acceptTraceContextPayload', async (t) => {
       txn.acceptTraceContextPayload(incomingTraceparent, incomingNullKeyedTracestate)
 
       // traceparent
-      assert.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
-      assert.equal(txn.parentSpanId, '00f067aa0ba902b7')
+      t.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
+      t.equal(txn.parentSpanId, '00f067aa0ba902b7')
 
       // tracestate
-      assert.equal(txn.parentType, null)
-      assert.equal(txn.accountId, undefined)
-      assert.equal(txn.parentApp, null)
-      assert.equal(txn.parentId, null)
+      t.equal(txn.parentType, null)
+      t.equal(txn.accountId, undefined)
+      t.equal(txn.parentApp, null)
+      t.equal(txn.parentId, null)
 
       txn.end()
-      end()
+      t.end()
     })
   })
 
-  await t.test('should accept tracestate when trusted_account_key matches', (t, end) => {
-    const { agent } = t.nr
+  t.test('should accept tracestate when trusted_account_key matches', (t) => {
     agent.config.trusted_account_key = '33'
     agent.config.distributed_tracing.enabled = true
     agent.config.span_events.enabled = true
@@ -1656,48 +1636,52 @@ test('acceptTraceContextPayload', async (t) => {
       txn.acceptTraceContextPayload(incomingTraceparent, incomingNullKeyedTracestate)
 
       // traceparent
-      assert.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
-      assert.equal(txn.parentSpanId, '00f067aa0ba902b7')
+      t.equal(txn.traceId, '4bf92f3577b34da6a3ce929d0e0e4736')
+      t.equal(txn.parentSpanId, '00f067aa0ba902b7')
 
       // tracestate
-      assert.equal(txn.parentType, 'App')
-      assert.equal(txn.parentAcct, '33')
-      assert.equal(txn.parentApp, '2827902')
-      assert.equal(txn.parentId, 'e8b91a159289ff74')
+      t.equal(txn.parentType, 'App')
+      t.equal(txn.parentAcct, '33')
+      t.equal(txn.parentApp, '2827902')
+      t.equal(txn.parentId, 'e8b91a159289ff74')
 
       txn.end()
-      end()
+      t.end()
     })
   })
 })
 
-test('addDistributedTraceIntrinsics', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('addDistributedTraceIntrinsics', (t) => {
+  t.autoend()
+
+  let txn = null
+  let attributes = null
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       attributes: { enabled: true }
     })
-    ctx.nr.attributes = {}
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    attributes = {}
+    txn = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test('does not change existing priority', (t) => {
-    const { txn, attributes } = t.nr
+  t.test('does not change existing priority', (t) => {
     txn.priority = 999
     txn.sampled = false
 
     txn.addDistributedTraceIntrinsics(attributes)
 
-    assert.equal(txn.priority, 999)
-    assert.ok(!txn.sampled)
+    t.equal(txn.priority, 999)
+    t.notOk(txn.sampled)
+    t.end()
   })
 
-  await t.test('adds expected attributes if no payload was received', (t) => {
-    const { txn, attributes } = t.nr
+  t.test('adds expected attributes if no payload was received', (t) => {
     txn.isDistributedTrace = false
 
     txn.addDistributedTraceIntrinsics(attributes)
@@ -1708,11 +1692,11 @@ test('addDistributedTraceIntrinsics', async (t) => {
       priority: txn.priority,
       sampled: true
     }
-    assert.deepEqual(attributes, expected)
+    t.has(attributes, expected)
+    t.end()
   })
 
-  await t.test('adds DT attributes if payload was accepted', (t) => {
-    const { txn, attributes } = t.nr
+  t.test('adds DT attributes if payload was accepted', (t) => {
     txn.agent.config.account_id = '5678'
     txn.agent.config.primary_application_id = '1234'
     txn.agent.config.trusted_account_key = '5678'
@@ -1721,6 +1705,7 @@ test('addDistributedTraceIntrinsics', async (t) => {
     const payload = txn._createDistributedTracePayload().text()
     txn.isDistributedTrace = false
     txn._acceptDistributedTracePayload(payload, 'AMQP')
+
     txn.addDistributedTraceIntrinsics(attributes)
 
     const expected = {
@@ -1729,19 +1714,20 @@ test('addDistributedTraceIntrinsics', async (t) => {
       'parent.account': '5678',
       'parent.transportType': 'AMQP'
     }
-
-    assert.equal(attributes['parent.type'], expected['parent.type'])
-    assert.equal(attributes['parent.app'], expected['parent.app'])
-    assert.equal(attributes['parent.account'], expected['parent.account'])
-    assert.equal(attributes['parent.transportType'], expected['parent.transportType'])
-    assert.notEqual(attributes['parent.transportDuration'], null)
+    t.has(attributes, expected)
+    t.hasProp(attributes, 'parent.transportDuration')
+    t.end()
   })
 })
 
-test('transaction end', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('transaction end', (t) => {
+  t.autoend()
+
+  let agent = null
+  let transaction = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       attributes: {
         enabled: true,
         include: ['request.parameters.*']
@@ -1751,44 +1737,52 @@ test('transaction end', async (t) => {
       }
     })
 
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    transaction = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+
+    agent = null
+    transaction = null
   })
 
-  await t.test('should clear errors', (t) => {
-    const { txn } = t.nr
-    txn.userErrors.push(new Error('user sadness'))
-    txn.exceptions.push(new Error('things went bad'))
+  t.test('should clear errors', (t) => {
+    transaction.userErrors.push(new Error('user sadness'))
+    transaction.exceptions.push(new Error('things went bad'))
 
-    txn.end()
+    transaction.end()
 
-    assert.equal(txn.userErrors, null)
-    assert.equal(txn.exceptions, null)
+    t.equal(transaction.userErrors, null)
+    t.equal(transaction.exceptions, null)
+
+    t.end()
   })
 
-  await t.test('should not clear errors until after transactionFinished event', (t, end) => {
-    const { agent, txn } = t.nr
-    txn.userErrors.push(new Error('user sadness'))
-    txn.exceptions.push(new Error('things went bad'))
+  t.test('should not clear errors until after transactionFinished event', (t) => {
+    transaction.userErrors.push(new Error('user sadness'))
+    transaction.exceptions.push(new Error('things went bad'))
 
     agent.on('transactionFinished', (endedTransaction) => {
-      assert.equal(endedTransaction.userErrors.length, 1)
-      assert.equal(endedTransaction.exceptions.length, 1)
+      t.equal(endedTransaction.userErrors.length, 1)
+      t.equal(endedTransaction.exceptions.length, 1)
 
-      end()
+      t.end()
     })
 
-    txn.end()
+    transaction.end()
   })
 })
 
-test('when being named with finalizeNameFromUri', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('when being named with finalizeNameFromUri', (t) => {
+  t.autoend()
+
+  let agent = null
+  let contextManager = null
+  let transaction = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       attributes: {
         enabled: true,
         include: ['request.parameters.*']
@@ -1797,133 +1791,152 @@ test('when being named with finalizeNameFromUri', async (t) => {
         enabled: true
       }
     })
-    ctx.nr.contextManager = helper.getContextManager()
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    contextManager = helper.getContextManager()
+
+    transaction = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+
+    agent = null
+    transaction = null
   })
 
-  await t.test('should throw when called with no parameters', (t) => {
-    const { txn } = t.nr
-    assert.throws(() => txn.finalizeNameFromUri())
+  t.test('should throw when called with no parameters', (t) => {
+    t.throws(() => transaction.finalizeNameFromUri())
+
+    t.end()
   })
 
-  await t.test('should ignore a request path when told to by a rule', (t) => {
-    const { agent, txn } = t.nr
+  t.test('should ignore a request path when told to by a rule', (t) => {
     const api = new API(agent)
     api.addIgnoringRule('^/test/')
 
-    txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
+    transaction.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
 
-    assert.equal(txn.isIgnored(), true)
+    t.equal(transaction.isIgnored(), true)
+
+    t.end()
   })
 
-  await t.test('should ignore a transaction when told to by a rule', (t) => {
-    const { agent, txn } = t.nr
+  t.test('should ignore a transaction when told to by a rule', (t) => {
     agent.transactionNameNormalizer.addSimple('^WebTransaction/NormalizedUri')
 
-    txn.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
+    transaction.finalizeNameFromUri('/test/string?do=thing&another=thing', 200)
 
-    assert.equal(txn.isIgnored(), true)
+    t.equal(transaction.isIgnored(), true)
+
+    t.end()
   })
 
-  await t.test('should pass through a name when told to by a rule', (t) => {
-    const { agent, txn } = t.nr
+  t.test('should pass through a name when told to by a rule', (t) => {
     agent.userNormalizer.addSimple('^/config', '/foobar')
 
-    txn.finalizeNameFromUri('/config', 200)
+    transaction.finalizeNameFromUri('/config', 200)
 
-    assert.equal(txn.name, 'WebTransaction/NormalizedUri/foobar')
+    t.equal(transaction.name, 'WebTransaction/NormalizedUri/foobar')
+
+    t.end()
   })
 
-  await t.test('should add finalized via rule transaction name to active span intrinsics', (t) => {
-    const { agent, txn, contextManager } = t.nr
+  t.test('should add finalized via rule transaction name to active span intrinsics', (t) => {
     agent.userNormalizer.addSimple('^/config', '/foobar')
 
-    addSegmentInContext(contextManager, txn, 'test segment')
+    addSegmentInContext(contextManager, transaction, 'test segment')
 
-    txn.finalizeNameFromUri('/config', 200)
+    transaction.finalizeNameFromUri('/config', 200)
 
     const spanContext = agent.tracer.getSpanContext()
     const intrinsics = spanContext.intrinsicAttributes
 
-    assert.ok(intrinsics)
-    assert.equal(intrinsics['transaction.name'], 'WebTransaction/NormalizedUri/foobar')
+    t.ok(intrinsics)
+    t.equal(intrinsics['transaction.name'], 'WebTransaction/NormalizedUri/foobar')
+
+    t.end()
   })
 
-  await t.test('when namestate populated should use name stack', (t) => {
-    const { txn } = t.nr
-    setupNameState(txn)
+  t.test('when namestate populated should use name stack', (t) => {
+    setupNameState(transaction)
 
-    txn.finalizeNameFromUri('/some/random/path', 200)
+    transaction.finalizeNameFromUri('/some/random/path', 200)
 
-    assert.equal(txn.name, 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+    t.equal(transaction.name, 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+
+    t.end()
   })
 
-  await t.test('when namestate populated should copy parameters from the name stack', (t) => {
-    const { txn } = t.nr
-    setupNameState(txn)
+  t.test('when namestate populated should copy parameters from the name stack', (t) => {
+    setupNameState(transaction)
 
-    txn.finalizeNameFromUri('/some/random/path', 200)
+    transaction.finalizeNameFromUri('/some/random/path', 200)
 
-    const attrs = txn.trace.attributes.get(AttributeFilter.DESTINATIONS.TRANS_TRACE)
+    const attrs = transaction.trace.attributes.get(AttributeFilter.DESTINATIONS.TRANS_TRACE)
 
-    match(attrs, {
+    t.match(attrs, {
       'request.parameters.foo': 'biz',
       'request.parameters.bar': 'bang'
     })
+
+    t.end()
   })
 
-  await t.test(
+  t.test(
     'when namestate populated, ' +
       'should add finalized via rule transaction name to active span intrinsics',
     (t) => {
-      const { agent, txn, contextManager } = t.nr
-      setupNameState(txn)
-      addSegmentInContext(contextManager, txn, 'test segment')
+      setupNameState(transaction)
+      addSegmentInContext(contextManager, transaction, 'test segment')
 
-      txn.finalizeNameFromUri('/some/random/path', 200)
+      transaction.finalizeNameFromUri('/some/random/path', 200)
 
       const spanContext = agent.tracer.getSpanContext()
       const intrinsics = spanContext.intrinsicAttributes
 
-      assert.ok(intrinsics)
-      assert.equal(intrinsics['transaction.name'], 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+      t.ok(intrinsics)
+      t.equal(intrinsics['transaction.name'], 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+
+      t.end()
     }
   )
 
-  await t.test('when namestate populated and high_security enabled, should use name stack', (t) => {
-    const { agent, txn } = t.nr
-    setupNameState(txn)
+  t.test('when namestate populated and high_security enabled, should use name stack', (t) => {
+    setupNameState(transaction)
     setupHighSecurity(agent)
 
-    txn.finalizeNameFromUri('/some/random/path', 200)
+    transaction.finalizeNameFromUri('/some/random/path', 200)
 
-    assert.equal(txn.name, 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+    t.equal(transaction.name, 'WebTransaction/Restify/COOL//foo/:foo/bar/:bar')
+
+    t.end()
   })
 
-  await t.test(
+  t.test(
     'when namestate populated and high_security enabled, ' +
       'should not copy parameters from the name stack',
     (t) => {
-      const { agent, txn } = t.nr
-      setupNameState(txn)
+      setupNameState(transaction)
       setupHighSecurity(agent)
 
-      txn.finalizeNameFromUri('/some/random/path', 200)
+      transaction.finalizeNameFromUri('/some/random/path', 200)
 
-      const attrs = txn.trace.attributes.get(AttributeFilter.DESTINATIONS.TRANS_TRACE)
-      assert.deepEqual(attrs, {})
+      const attrs = transaction.trace.attributes.get(AttributeFilter.DESTINATIONS.TRANS_TRACE)
+      t.same(attrs, {})
+
+      t.end()
     }
   )
 })
 
-test('requestd', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('requestd', (t) => {
+  t.autoend()
+
+  let agent = null
+  let contextManager = null
+  let transaction = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       span_events: {
         enabled: true,
         attributes: {
@@ -1935,35 +1948,45 @@ test('requestd', async (t) => {
       }
     })
 
-    ctx.nr.contextManager = helper.getContextManager()
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    contextManager = helper.getContextManager()
+
+    transaction = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+
+    agent = null
+    transaction = null
   })
 
-  await t.test('when namestate populated should copy parameters from the name stack', (t) => {
-    const { txn, contextManager } = t.nr
-    setupNameState(txn)
+  t.test('when namestate populated should copy parameters from the name stack', (t) => {
+    setupNameState(transaction)
 
-    addSegmentInContext(contextManager, txn, 'test segment')
+    addSegmentInContext(contextManager, transaction, 'test segment')
 
-    txn.finalizeNameFromUri('/some/random/path', 200)
+    transaction.finalizeNameFromUri('/some/random/path', 200)
 
     const segment = contextManager.getContext()
 
-    match(segment.attributes.get(AttributeFilter.DESTINATIONS.SPAN_EVENT), {
+    t.match(segment.attributes.get(AttributeFilter.DESTINATIONS.SPAN_EVENT), {
       'request.parameters.foo': 'biz',
       'request.parameters.bar': 'bang'
     })
+
+    t.end()
   })
 })
 
-test('when being named with finalizeName', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent({
+tap.test('when being named with finalizeName', (t) => {
+  t.autoend()
+
+  let agent = null
+  let contextManager = null
+  let transaction = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent({
       attributes: {
         enabled: true,
         include: ['request.parameters.*']
@@ -1973,57 +1996,64 @@ test('when being named with finalizeName', async (t) => {
       }
     })
 
-    ctx.nr.contextManager = helper.getContextManager()
-    ctx.nr.txn = new Transaction(ctx.nr.agent)
+    contextManager = helper.getContextManager()
+    transaction = new Transaction(agent)
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+
+    agent = null
+    transaction = null
   })
 
-  await t.test('should call finalizeNameFromUri if no name is given for a web txn', (t) => {
-    const { txn } = t.nr
+  t.test('should call finalizeNameFromUri if no name is given for a web txn', (t) => {
     let called = false
 
-    txn.finalizeNameFromUri = () => {
+    transaction.finalizeNameFromUri = () => {
       called = true
     }
-    txn.type = 'web'
-    txn.url = '/foo/bar'
-    txn.finalizeName()
+    transaction.type = 'web'
+    transaction.url = '/foo/bar'
+    transaction.finalizeName()
 
-    assert.ok(called)
+    t.ok(called)
+
+    t.end()
   })
 
-  await t.test('should apply ignore rules', (t) => {
-    const { agent, txn } = t.nr
+  t.test('should apply ignore rules', (t) => {
     agent.transactionNameNormalizer.addSimple('foo') // Ignore foo
 
-    txn.finalizeName('foo')
+    transaction.finalizeName('foo')
 
-    assert.equal(txn.isIgnored(), true)
+    t.equal(transaction.isIgnored(), true)
+
+    t.end()
   })
 
-  await t.test('should not apply user naming rules', (t) => {
-    const { agent, txn } = t.nr
+  t.test('should not apply user naming rules', (t) => {
     agent.userNormalizer.addSimple('^/config', '/foobar')
 
-    txn.finalizeName('/config')
+    transaction.finalizeName('/config')
 
-    assert.equal(txn.getFullName(), 'WebTransaction//config')
+    t.equal(transaction.getFullName(), 'WebTransaction//config')
+
+    t.end()
   })
 
-  await t.test('should add finalized transaction name to active span intrinsics', (t) => {
-    const { agent, txn, contextManager } = t.nr
-    addSegmentInContext(contextManager, txn, 'test segment')
+  t.test('should add finalized transaction name to active span intrinsics', (t) => {
+    addSegmentInContext(contextManager, transaction, 'test segment')
 
-    txn.finalizeName('/config')
+    transaction.finalizeName('/config')
 
     const spanContext = agent.tracer.getSpanContext()
     const intrinsics = spanContext.intrinsicAttributes
 
-    assert.ok(intrinsics)
-    assert.equal(intrinsics['transaction.name'], 'WebTransaction//config')
+    t.ok(intrinsics)
+    t.equal(intrinsics['transaction.name'], 'WebTransaction//config')
+
+    t.end()
   })
 })
 
