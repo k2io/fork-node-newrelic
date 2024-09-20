@@ -1,166 +1,180 @@
 /*
- * Copyright 2024 New Relic Corporation. All rights reserved.
+ * Copyright 2020 New Relic Corporation. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
+const test = tap.test
 
 const helper = require('../lib/agent_helper')
-const { Exception } = require('../../lib/errors')
+const Exception = require('../../lib/errors').Exception
 
-test('when error events are disabled', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
+test('Error events', (t) => {
+  t.autoend()
+
+  t.test('when error events are disabled', (t) => {
+    let agent
+
+    t.beforeEach(() => {
+      agent = helper.loadMockedAgent()
+    })
+
+    t.afterEach(() => {
+      helper.unloadAgent(agent)
+    })
+
+    t.test('collector can override', (t) => {
+      agent.config.error_collector.capture_events = false
+      t.doesNotThrow(() =>
+        agent.config.onConnect({
+          'error_collector.capture_events': true,
+          'error_collector.max_event_samples_stored': 42
+        })
+      )
+      t.equal(agent.config.error_collector.capture_events, true)
+      t.equal(agent.config.error_collector.max_event_samples_stored, 42)
+
+      t.end()
+    })
+
+    t.end()
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
-  })
+  t.test('attributes', (t) => {
+    let agent
 
-  await t.test('collector can override', (t) => {
-    const { agent } = t.nr
-    agent.config.error_collector.capture_events = false
-    assert.doesNotThrow(() =>
-      agent.config.onConnect({
-        'error_collector.capture_events': true,
-        'error_collector.max_event_samples_stored': 42
+    t.beforeEach(() => {
+      agent = helper.loadMockedAgent()
+    })
+
+    t.afterEach(() => {
+      helper.unloadAgent(agent)
+    })
+
+    t.test('should include DT intrinsics', (t) => {
+      agent.config.distributed_tracing.enabled = true
+      agent.config.primary_application_id = 'test'
+      agent.config.account_id = 1
+      helper.runInTransaction(agent, function (tx) {
+        const payload = tx._createDistributedTracePayload().text()
+        tx.isDistributedTrace = null
+        tx._acceptDistributedTracePayload(payload)
+        const error = new Error('some error')
+        const customAttributes = {}
+        const timestamp = 0
+        const exception = new Exception({ error, customAttributes, timestamp })
+        tx.addException(exception)
+
+        tx.end()
+        const attributes = agent.errors.eventAggregator.getEvents()[0][0]
+
+        t.equal(attributes.type, 'TransactionError')
+        t.equal(attributes.traceId, tx.traceId)
+        t.equal(attributes.guid, tx.id)
+        t.equal(attributes.priority, tx.priority)
+        t.equal(attributes.sampled, tx.sampled)
+        t.equal(attributes['parent.type'], 'App')
+        t.equal(attributes['parent.app'], agent.config.primary_application_id)
+        t.equal(attributes['parent.account'], agent.config.account_id)
+        t.equal(attributes['nr.transactionGuid'], tx.id)
+        t.notOk(attributes.parentId)
+        t.notOk(attributes.parentSpanId)
+
+        t.end()
       })
-    )
-    assert.equal(agent.config.error_collector.capture_events, true)
-    assert.equal(agent.config.error_collector.max_event_samples_stored, 42)
-  })
-})
-
-test('attributes', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
-  })
-
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
-  })
-
-  await t.test('should include DT intrinsics', (t, end) => {
-    const { agent } = t.nr
-    agent.config.distributed_tracing.enabled = true
-    agent.config.primary_application_id = 'test'
-    agent.config.account_id = 1
-    helper.runInTransaction(agent, function (tx) {
-      const payload = tx._createDistributedTracePayload().text()
-      tx.isDistributedTrace = null
-      tx._acceptDistributedTracePayload(payload)
-      const error = new Error('some error')
-      const customAttributes = {}
-      const timestamp = 0
-      const exception = new Exception({ error, customAttributes, timestamp })
-      tx.addException(exception)
-
-      tx.end()
-      const attributes = agent.errors.eventAggregator.getEvents()[0][0]
-
-      assert.equal(attributes.type, 'TransactionError')
-      assert.equal(attributes.traceId, tx.traceId)
-      assert.equal(attributes.guid, tx.id)
-      assert.equal(attributes.priority, tx.priority)
-      assert.equal(attributes.sampled, tx.sampled)
-      assert.equal(attributes['parent.type'], 'App')
-      assert.equal(attributes['parent.app'], agent.config.primary_application_id)
-      assert.equal(attributes['parent.account'], agent.config.account_id)
-      assert.equal(attributes['nr.transactionGuid'], tx.id)
-      assert.equal(attributes.parentId, undefined)
-      assert.equal(attributes.parentSpanId, undefined)
-
-      end()
     })
-  })
 
-  await t.test('should include spanId agent attribute', (t, end) => {
-    const { agent } = t.nr
-    agent.config.distributed_tracing.enabled = true
-    agent.config.primary_application_id = 'test'
-    agent.config.account_id = 1
-    helper.runInTransaction(agent, function (tx) {
-      const payload = tx._createDistributedTracePayload().text()
-      tx.isDistributedTrace = null
-      tx._acceptDistributedTracePayload(payload)
-      const error = new Error('some error')
-      const customAttributes = {}
-      const timestamp = 0
-      const exception = new Exception({ error, customAttributes, timestamp })
-      tx.addException(exception)
+    t.test('should include spanId agent attribute', (t) => {
+      agent.config.distributed_tracing.enabled = true
+      agent.config.primary_application_id = 'test'
+      agent.config.account_id = 1
+      helper.runInTransaction(agent, function (tx) {
+        const payload = tx._createDistributedTracePayload().text()
+        tx.isDistributedTrace = null
+        tx._acceptDistributedTracePayload(payload)
+        const error = new Error('some error')
+        const customAttributes = {}
+        const timestamp = 0
+        const exception = new Exception({ error, customAttributes, timestamp })
+        tx.addException(exception)
 
-      const segment = tx.agent.tracer.getSegment()
+        const segment = tx.agent.tracer.getSegment()
 
-      tx.end()
+        tx.end()
 
-      const { 2: agentAttributes } = agent.errors.eventAggregator.getEvents()[0]
+        const { 2: agentAttributes } = agent.errors.eventAggregator.getEvents()[0]
 
-      assert.equal(agentAttributes.spanId, segment.id)
+        t.equal(agentAttributes.spanId, segment.id)
 
-      end()
+        t.end()
+      })
     })
-  })
 
-  await t.test('should have the expected priority', (t, end) => {
-    const { agent } = t.nr
-    agent.config.distributed_tracing.enabled = true
-    agent.config.primary_application_id = 'test'
-    agent.config.account_id = 1
-    helper.runInTransaction(agent, function (tx) {
-      const error = new Error('some error')
-      const customAttributes = {}
-      const timestamp = 0
-      const exception = new Exception({ error, customAttributes, timestamp })
-      tx.addException(exception)
-      tx.end()
-      const attributes = agent.errors.eventAggregator.getEvents()[0][0]
+    t.test('should have the expected priority', (t) => {
+      agent.config.distributed_tracing.enabled = true
+      agent.config.primary_application_id = 'test'
+      agent.config.account_id = 1
+      helper.runInTransaction(agent, function (tx) {
+        const error = new Error('some error')
+        const customAttributes = {}
+        const timestamp = 0
+        const exception = new Exception({ error, customAttributes, timestamp })
+        tx.addException(exception)
+        tx.end()
+        const attributes = agent.errors.eventAggregator.getEvents()[0][0]
 
-      assert.equal(attributes.type, 'TransactionError')
-      assert.equal(attributes.traceId, tx.traceId)
-      assert.equal(attributes.guid, tx.id)
-      assert.equal(attributes.priority, tx.priority)
-      assert.equal(attributes.sampled, tx.sampled)
-      assert.equal(attributes['nr.transactionGuid'], tx.id)
-      assert.ok(tx.priority > 1)
-      assert.equal(tx.sampled, true)
+        t.equal(attributes.type, 'TransactionError')
+        t.equal(attributes.traceId, tx.traceId)
+        t.equal(attributes.guid, tx.id)
+        t.equal(attributes.priority, tx.priority)
+        t.equal(attributes.sampled, tx.sampled)
+        t.equal(attributes['nr.transactionGuid'], tx.id)
+        t.ok(tx.priority > 1)
+        t.equal(tx.sampled, true)
 
-      end()
+        t.end()
+      })
     })
-  })
-})
 
-test('attributes', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
-    ctx.nr.agent.config.error_collector.capture_events = true
+    t.end()
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
-  })
+  t.test('when error events are enabled', (t) => {
+    let agent
 
-  await t.test('collector can override', (t) => {
-    const { agent } = t.nr
-    assert.doesNotThrow(() => agent.config.onConnect({ 'error_collector.capture_events': false }))
-    assert.equal(agent.config.error_collector.capture_events, false)
-  })
+    t.beforeEach(() => {
+      agent = helper.loadMockedAgent()
+      agent.config.error_collector.capture_events = true
+    })
 
-  await t.test('collector can disable using the emergency shut off', (t) => {
-    const { agent } = t.nr
-    assert.doesNotThrow(() => agent.config.onConnect({ collect_error_events: false }))
-    assert.equal(agent.config.error_collector.capture_events, false)
-  })
+    t.afterEach(() => {
+      helper.unloadAgent(agent)
+    })
 
-  await t.test('collector cannot enable using the emergency shut off', (t) => {
-    const { agent } = t.nr
-    agent.config.error_collector.capture_events = false
-    assert.doesNotThrow(() => agent.config.onConnect({ collect_error_events: true }))
-    assert.equal(agent.config.error_collector.capture_events, false)
+    t.test('collector can override', (t) => {
+      t.doesNotThrow(() => agent.config.onConnect({ 'error_collector.capture_events': false }))
+      t.equal(agent.config.error_collector.capture_events, false)
+
+      t.end()
+    })
+
+    t.test('collector can disable using the emergency shut off', (t) => {
+      t.doesNotThrow(() => agent.config.onConnect({ collect_error_events: false }))
+      t.equal(agent.config.error_collector.capture_events, false)
+
+      t.end()
+    })
+
+    t.test('collector cannot enable using the emergency shut off', (t) => {
+      agent.config.error_collector.capture_events = false
+      t.doesNotThrow(() => agent.config.onConnect({ collect_error_events: true }))
+      t.equal(agent.config.error_collector.capture_events, false)
+
+      t.end()
+    })
+
+    t.end()
   })
 })
