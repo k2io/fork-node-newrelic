@@ -33,7 +33,6 @@ test('getVendors', async function (t) {
     let azureCalled = false
     let gcpCalled = false
     let dockerCalled = false
-    let ecsCalled = false
     let kubernetesCalled = false
     let pcfCalled = false
 
@@ -56,10 +55,6 @@ test('getVendors', async function (t) {
           cb()
         }
       },
-      './ecs-info': function (agentArg, cb) {
-        ecsCalled = true
-        cb()
-      },
       './kubernetes-info': (agentArg, cb) => {
         kubernetesCalled = true
         cb()
@@ -76,7 +71,6 @@ test('getVendors', async function (t) {
       assert.ok(azureCalled)
       assert.ok(gcpCalled)
       assert.ok(dockerCalled)
-      assert.ok(ecsCalled)
       assert.ok(kubernetesCalled)
       assert.ok(pcfCalled)
       end()

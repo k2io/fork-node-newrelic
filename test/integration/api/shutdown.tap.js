@@ -28,10 +28,7 @@ tap.test('#shutdown', (t) => {
 
     agent = helper.loadMockedAgent({
       license_key: EXPECTED_LICENSE_KEY,
-      host: TEST_DOMAIN,
-      utilization: {
-        detect_aws: false
-      }
+      host: TEST_DOMAIN
     })
 
     agent.config.no_immediate_harvest = true
