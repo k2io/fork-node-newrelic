@@ -1,77 +1,79 @@
 /*
- * Copyright 2024 New Relic Corporation. All rights reserved.
+ * Copyright 2020 New Relic Corporation. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
 
 const ErrorEventAggregator = require('../../../lib/errors/error-event-aggregator')
 const Metrics = require('../../../lib/metrics')
-const { match } = require('../../lib/custom-assertions')
+const sinon = require('sinon')
 
 const RUN_ID = 1337
 const LIMIT = 5
 
-test('Error Event Aggregator', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.errorEventAggregator = new ErrorEventAggregator(
+tap.test('Error Event Aggregator', (t) => {
+  t.autoend()
+  let errorEventAggregator
+
+  t.beforeEach(() => {
+    errorEventAggregator = new ErrorEventAggregator(
       {
         config: { error_collector: { enabled: true, capture_events: true } },
         runId: RUN_ID,
         limit: LIMIT,
-        enabled(config) {
-          return config.error_collector.enabled && config.error_collector.capture_events
-        }
+        enabled: (config) => config.error_collector.enabled && config.error_collector.capture_events
       },
       {
         collector: {},
         metrics: new Metrics(5, {}, {}),
-        harvester: { add() {} }
+        harvester: { add: sinon.stub() }
       }
     )
+    sinon.stub(errorEventAggregator, 'stop')
+  })
 
-    ctx.nr.stopped = 0
-    ctx.nr.errorEventAggregator.stop = () => {
-      ctx.nr.stopped += 1
+  t.afterEach(() => {
+    errorEventAggregator = null
+  })
+
+  t.test('should set the correct default method', (t) => {
+    const method = errorEventAggregator.method
+
+    t.equal(method, 'error_event_data', 'default method should be error_event_data')
+    t.end()
+  })
+
+  t.test('toPayload() should return json format of data', (t) => {
+    const expectedMetrics = {
+      reservoir_size: LIMIT,
+      events_seen: 1
     }
-  })
 
-  await t.test('should set the correct default method', (t) => {
-    const { errorEventAggregator } = t.nr
-    assert.equal(
-      errorEventAggregator.method,
-      'error_event_data',
-      'default method should be error_event_data'
-    )
-  })
-
-  await t.test('toPayload() should return json format of data', (t) => {
-    const { errorEventAggregator } = t.nr
-    const expectedMetrics = { reservoir_size: LIMIT, events_seen: 1 }
     const rawErrorEvent = [{ 'type': 'TransactionError', 'error.class': 'class' }, {}, {}]
 
     errorEventAggregator.add(rawErrorEvent)
 
     const payload = errorEventAggregator._toPayloadSync()
-    assert.equal(payload.length, 3, 'payload length should be 3')
+    t.equal(payload.length, 3, 'payload length should be 3')
 
     const [runId, eventMetrics, errorEventData] = payload
-    assert.equal(runId, RUN_ID)
-    assert.equal(match(eventMetrics, expectedMetrics), true)
-    assert.equal(match(errorEventData, [rawErrorEvent]), true)
+
+    t.equal(runId, RUN_ID)
+    t.same(eventMetrics, expectedMetrics)
+    t.same(errorEventData, [rawErrorEvent])
+    t.end()
   })
 
-  await t.test('toPayload() should return nothing with no error event data', (t) => {
-    const { errorEventAggregator } = t.nr
+  t.test('toPayload() should return nothing with no error event data', (t) => {
     const payload = errorEventAggregator._toPayloadSync()
-    assert.equal(payload, undefined)
-  })
 
-  const methodTests = [
+    t.notOk(payload)
+    t.end()
+  })
+  ;[
     {
       callCount: 1,
       msg: 'should stop aggregator',
@@ -87,15 +89,13 @@ test('Error Event Aggregator', async (t) => {
       msg: 'should not stop aggregator',
       config: { error_collector: { enabled: true, capture_events: true } }
     }
-  ]
-  for (const methodTest of methodTests) {
-    const { callCount, config, msg } = methodTest
-    await t.test(`${msg} if ${JSON.stringify(config)}`, (t) => {
-      const { errorEventAggregator } = t.nr
-      const newConfig = { getAggregatorConfig() {}, run_id: 1, ...config }
-      assert.equal(errorEventAggregator.enabled, true)
+  ].forEach(({ config, msg, callCount }) => {
+    t.test(`${msg} if ${JSON.stringify(config)}`, (t) => {
+      const newConfig = { getAggregatorConfig: sinon.stub(), run_id: 1, ...config }
+      t.ok(errorEventAggregator.enabled)
       errorEventAggregator.reconfigure(newConfig)
-      assert.equal(t.nr.stopped, callCount, msg)
+      t.equal(errorEventAggregator.stop.callCount, callCount, msg)
+      t.end()
     })
-  }
+  })
 })
