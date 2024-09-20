@@ -4,8 +4,8 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const sinon = require('sinon')
 
 const StreamingSpanEventAggregator = require('../../../lib/spans/streaming-span-event-aggregator')
@@ -15,7 +15,7 @@ const agent = {
   harvester: { add: sinon.stub() }
 }
 
-test('Should only attempt to connect on first start() call', () => {
+tap.test('Should only attempt to connect on first start() call', (t) => {
   let connectCount = 0
 
   const opts = {
@@ -29,20 +29,22 @@ test('Should only attempt to connect on first start() call', () => {
   const streamingSpanAggregator = new StreamingSpanEventAggregator(opts, agent)
 
   streamingSpanAggregator.start()
-  assert.equal(connectCount, 1)
+  t.equal(connectCount, 1)
 
   streamingSpanAggregator.start()
-  assert.equal(connectCount, 1)
+  t.equal(connectCount, 1)
+
+  t.end()
 })
 
-test('Should only attempt to disconnect on first stop() call', () => {
-  let disconnectCount = 0
+tap.test('Should only attempt to disconnect on first stop() call', (t) => {
+  let disonnectCount = 0
 
   const opts = {
     span_streamer: {
       connect: () => {},
       disconnect: () => {
-        disconnectCount++
+        disonnectCount++
       }
     }
   }
@@ -51,13 +53,15 @@ test('Should only attempt to disconnect on first stop() call', () => {
   streamingSpanAggregator.start()
 
   streamingSpanAggregator.stop()
-  assert.equal(disconnectCount, 1)
+  t.equal(disonnectCount, 1)
 
   streamingSpanAggregator.stop()
-  assert.equal(disconnectCount, 1)
+  t.equal(disonnectCount, 1)
+
+  t.end()
 })
 
-test('Should attempt to connect on start() after stop() call', () => {
+tap.test('Should attempt to connect on start() after stop() call', (t) => {
   let connectCount = 0
 
   const opts = {
@@ -75,5 +79,7 @@ test('Should attempt to connect on start() after stop() call', () => {
   streamingSpanAggregator.stop()
 
   streamingSpanAggregator.start()
-  assert.equal(connectCount, 2)
+  t.equal(connectCount, 2)
+
+  t.end()
 })

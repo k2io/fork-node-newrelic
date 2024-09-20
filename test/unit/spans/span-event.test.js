@@ -4,8 +4,8 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+
+const tap = require('tap')
 const DatastoreShim = require('../../../lib/shim/datastore-shim')
 const helper = require('../../lib/agent_helper')
 const https = require('https')
@@ -13,17 +13,17 @@ const SpanEvent = require('../../../lib/spans/span-event')
 const DatastoreParameters = require('../../../lib/shim/specs/params/datastore')
 const { QuerySpec } = require('../../../lib/shim/specs')
 
-test('#constructor() should construct an empty span event', () => {
+tap.test('#constructor() should construct an empty span event', (t) => {
   const attrs = {}
   const span = new SpanEvent(attrs)
 
-  assert.ok(span)
-  assert.ok(span instanceof SpanEvent)
-  assert.equal(span.attributes, attrs)
+  t.ok(span)
+  t.ok(span instanceof SpanEvent)
+  t.equal(span.attributes, attrs)
 
-  assert.ok(span.intrinsics)
-  assert.equal(span.intrinsics.type, 'Span')
-  assert.equal(span.intrinsics.category, SpanEvent.CATEGORIES.GENERIC)
+  t.ok(span.intrinsics)
+  t.equal(span.intrinsics.type, 'Span')
+  t.equal(span.intrinsics.category, SpanEvent.CATEGORIES.GENERIC)
 
   const emptyProps = [
     'traceId',
@@ -37,26 +37,30 @@ test('#constructor() should construct an empty span event', () => {
     'duration'
   ]
   emptyProps.forEach((prop) => {
-    assert.equal(span.intrinsics[prop], null)
+    t.equal(span.intrinsics[prop], null)
   })
+
+  t.end()
 })
 
-test('fromSegment()', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.instrumentMockedAgent({
+tap.test('fromSegment()', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.instrumentMockedAgent({
       distributed_tracing: {
         enabled: true
       }
     })
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test('should create a generic span with a random segment', (t, end) => {
-    const { agent } = t.nr
+  t.test('should create a generic span with a random segment', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       transaction.sampled = true
       transaction.priority = 42
@@ -73,61 +77,60 @@ test('fromSegment()', async (t) => {
         const span = SpanEvent.fromSegment(segment, 'parent')
 
         // Should have all the normal properties.
-        assert.ok(span)
-        assert.ok(span instanceof SpanEvent)
+        t.ok(span)
+        t.ok(span instanceof SpanEvent)
 
-        assert.ok(span.intrinsics)
-        assert.equal(span.intrinsics.type, 'Span')
-        assert.equal(span.intrinsics.category, SpanEvent.CATEGORIES.GENERIC)
+        t.ok(span.intrinsics)
+        t.equal(span.intrinsics.type, 'Span')
+        t.equal(span.intrinsics.category, SpanEvent.CATEGORIES.GENERIC)
 
-        assert.equal(span.intrinsics.traceId, transaction.traceId)
-        assert.equal(span.intrinsics.guid, segment.id)
-        assert.equal(span.intrinsics.parentId, 'parent')
-        assert.equal(span.intrinsics.transactionId, transaction.id)
-        assert.equal(span.intrinsics.sampled, true)
-        assert.equal(span.intrinsics.priority, 42)
-        assert.equal(span.intrinsics.name, 'timers.setTimeout')
-        assert.equal(span.intrinsics.timestamp, segment.timer.start)
+        t.equal(span.intrinsics.traceId, transaction.traceId)
+        t.equal(span.intrinsics.guid, segment.id)
+        t.equal(span.intrinsics.parentId, 'parent')
+        t.equal(span.intrinsics.transactionId, transaction.id)
+        t.equal(span.intrinsics.sampled, true)
+        t.equal(span.intrinsics.priority, 42)
+        t.equal(span.intrinsics.name, 'timers.setTimeout')
+        t.equal(span.intrinsics.timestamp, segment.timer.start)
 
-        assert.ok(span.intrinsics.duration >= 0.03 && span.intrinsics.duration <= 0.3)
+        t.ok(span.intrinsics.duration >= 0.03 && span.intrinsics.duration <= 0.3)
 
         // Generic should not have 'span.kind' or 'component'
-        assert.equal(span.intrinsics['span.kind'], null)
-        assert.equal(span.intrinsics.component, null)
+        t.equal(span.intrinsics['span.kind'], null)
+        t.equal(span.intrinsics.component, null)
 
-        assert.ok(span.customAttributes)
+        t.ok(span.customAttributes)
         const customAttributes = span.customAttributes
 
-        assert.ok(customAttributes['Span Lee'])
+        t.ok(customAttributes['Span Lee'])
 
-        assert.ok(span.attributes)
+        t.ok(span.attributes)
         const attributes = span.attributes
 
         const hasOwnAttribute = Object.hasOwnProperty.bind(attributes)
 
-        assert.ok(hasOwnAttribute('SpiderSpan'), 'Should have attribute added through segment')
-        assert.equal(attributes['server.address'], 'my-host')
-        assert.equal(attributes['server.port'], 222)
+        t.ok(hasOwnAttribute('SpiderSpan'), 'Should have attribute added through segment')
+        t.equal(attributes['server.address'], 'my-host')
+        t.equal(attributes['server.port'], 222)
 
         // Should have no http properties.
-        assert.ok(!hasOwnAttribute('externalLibrary'))
-        assert.ok(!hasOwnAttribute('externalUri'))
-        assert.ok(!hasOwnAttribute('externalProcedure'))
+        t.notOk(hasOwnAttribute('externalLibrary'))
+        t.notOk(hasOwnAttribute('externalUri'))
+        t.notOk(hasOwnAttribute('externalProcedure'))
 
         // Should have no datastore properties.
-        assert.ok(!hasOwnAttribute('db.statement'))
-        assert.ok(!hasOwnAttribute('db.instance'))
-        assert.ok(!hasOwnAttribute('db.system'))
-        assert.ok(!hasOwnAttribute('peer.hostname'))
-        assert.ok(!hasOwnAttribute('peer.address'))
+        t.notOk(hasOwnAttribute('db.statement'))
+        t.notOk(hasOwnAttribute('db.instance'))
+        t.notOk(hasOwnAttribute('db.system'))
+        t.notOk(hasOwnAttribute('peer.hostname'))
+        t.notOk(hasOwnAttribute('peer.address'))
 
-        end()
+        t.end()
       }, 50)
     })
   })
 
-  await t.test('should create an http span with a external segment', (t, end) => {
-    const { agent } = t.nr
+  t.test('should create an http span with a external segment', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       transaction.sampled = true
       transaction.priority = 42
@@ -139,65 +142,64 @@ test('fromSegment()', async (t) => {
           const span = SpanEvent.fromSegment(segment, 'parent')
 
           // Should have all the normal properties.
-          assert.ok(span)
-          assert.ok(span instanceof SpanEvent)
-          assert.ok(span instanceof SpanEvent.HttpSpanEvent)
+          t.ok(span)
+          t.ok(span instanceof SpanEvent)
+          t.ok(span instanceof SpanEvent.HttpSpanEvent)
 
-          assert.ok(span.intrinsics)
-          assert.equal(span.intrinsics.type, 'Span')
-          assert.equal(span.intrinsics.category, SpanEvent.CATEGORIES.HTTP)
+          t.ok(span.intrinsics)
+          t.equal(span.intrinsics.type, 'Span')
+          t.equal(span.intrinsics.category, SpanEvent.CATEGORIES.HTTP)
 
-          assert.equal(span.intrinsics.traceId, transaction.traceId)
-          assert.equal(span.intrinsics.guid, segment.id)
-          assert.equal(span.intrinsics.parentId, 'parent')
-          assert.equal(span.intrinsics.transactionId, transaction.id)
-          assert.equal(span.intrinsics.sampled, true)
-          assert.equal(span.intrinsics.priority, 42)
+          t.equal(span.intrinsics.traceId, transaction.traceId)
+          t.equal(span.intrinsics.guid, segment.id)
+          t.equal(span.intrinsics.parentId, 'parent')
+          t.equal(span.intrinsics.transactionId, transaction.id)
+          t.equal(span.intrinsics.sampled, true)
+          t.equal(span.intrinsics.priority, 42)
 
-          assert.equal(span.intrinsics.name, 'External/example.com/')
-          assert.equal(span.intrinsics.timestamp, segment.timer.start)
+          t.equal(span.intrinsics.name, 'External/example.com/')
+          t.equal(span.intrinsics.timestamp, segment.timer.start)
 
-          assert.ok(span.intrinsics.duration >= 0.01 && span.intrinsics.duration <= 2)
+          t.ok(span.intrinsics.duration >= 0.01 && span.intrinsics.duration <= 2)
 
           // Should have type-specific intrinsics
-          assert.equal(span.intrinsics.component, 'http')
-          assert.equal(span.intrinsics['span.kind'], 'client')
+          t.equal(span.intrinsics.component, 'http')
+          t.equal(span.intrinsics['span.kind'], 'client')
 
-          assert.ok(span.attributes)
+          t.ok(span.attributes)
           const attributes = span.attributes
 
           // Should have (most) http properties.
-          assert.equal(attributes['http.url'], 'https://example.com/')
-          assert.equal(attributes['server.address'], 'example.com')
-          assert.equal(attributes['server.port'], 443)
-          assert.ok(attributes['http.method'])
-          assert.ok(attributes['http.request.method'])
-          assert.equal(attributes['http.statusCode'], 200)
-          assert.equal(attributes['http.statusText'], 'OK')
+          t.equal(attributes['http.url'], 'https://example.com/')
+          t.equal(attributes['server.address'], 'example.com')
+          t.equal(attributes['server.port'], 443)
+          t.ok(attributes['http.method'])
+          t.ok(attributes['http.request.method'])
+          t.equal(attributes['http.statusCode'], 200)
+          t.equal(attributes['http.statusText'], 'OK')
 
           // should nullify mapped properties
-          assert.ok(!attributes.library)
-          assert.ok(!attributes.url)
-          assert.ok(!attributes.hostname)
-          assert.ok(!attributes.port)
-          assert.ok(!attributes.procedure)
+          t.notOk(attributes.library)
+          t.notOk(attributes.url)
+          t.notOk(attributes.hostname)
+          t.notOk(attributes.port)
+          t.notOk(attributes.procedure)
 
           // Should have no datastore properties.
           const hasOwnAttribute = Object.hasOwnProperty.bind(attributes)
-          assert.ok(!hasOwnAttribute('db.statement'))
-          assert.ok(!hasOwnAttribute('db.instance'))
-          assert.ok(!hasOwnAttribute('db.system'))
-          assert.ok(!hasOwnAttribute('peer.hostname'))
-          assert.ok(!hasOwnAttribute('peer.address'))
+          t.notOk(hasOwnAttribute('db.statement'))
+          t.notOk(hasOwnAttribute('db.instance'))
+          t.notOk(hasOwnAttribute('db.system'))
+          t.notOk(hasOwnAttribute('peer.hostname'))
+          t.notOk(hasOwnAttribute('peer.address'))
 
-          end()
+          t.end()
         })
       })
     })
   })
 
-  await t.test('should create a datastore span with a datastore segment', (t, end) => {
-    const { agent } = t.nr
+  t.test('should create a datastore span with a datastore segment', (t) => {
     agent.config.transaction_tracer.record_sql = 'raw'
 
     const shim = new DatastoreShim(agent, 'test-data-store')
@@ -241,62 +243,61 @@ test('fromSegment()', async (t) => {
         const span = SpanEvent.fromSegment(segment, 'parent')
 
         // Should have all the normal properties.
-        assert.ok(span)
-        assert.ok(span instanceof SpanEvent)
-        assert.ok(span instanceof SpanEvent.DatastoreSpanEvent)
+        t.ok(span)
+        t.ok(span instanceof SpanEvent)
+        t.ok(span instanceof SpanEvent.DatastoreSpanEvent)
 
-        assert.ok(span.intrinsics)
-        assert.equal(span.intrinsics.type, 'Span')
-        assert.equal(span.intrinsics.category, SpanEvent.CATEGORIES.DATASTORE)
+        t.ok(span.intrinsics)
+        t.equal(span.intrinsics.type, 'Span')
+        t.equal(span.intrinsics.category, SpanEvent.CATEGORIES.DATASTORE)
 
-        assert.equal(span.intrinsics.traceId, transaction.traceId)
-        assert.equal(span.intrinsics.guid, segment.id)
-        assert.equal(span.intrinsics.parentId, 'parent')
-        assert.equal(span.intrinsics.transactionId, transaction.id)
-        assert.equal(span.intrinsics.sampled, true)
-        assert.equal(span.intrinsics.priority, 42)
+        t.equal(span.intrinsics.traceId, transaction.traceId)
+        t.equal(span.intrinsics.guid, segment.id)
+        t.equal(span.intrinsics.parentId, 'parent')
+        t.equal(span.intrinsics.transactionId, transaction.id)
+        t.equal(span.intrinsics.sampled, true)
+        t.equal(span.intrinsics.priority, 42)
 
-        assert.equal(span.intrinsics.name, 'Datastore/statement/TestStore/test/test')
-        assert.equal(span.intrinsics.timestamp, segment.timer.start)
+        t.equal(span.intrinsics.name, 'Datastore/statement/TestStore/test/test')
+        t.equal(span.intrinsics.timestamp, segment.timer.start)
 
-        assert.ok(span.intrinsics.duration >= 0.03 && span.intrinsics.duration <= 0.7)
+        t.ok(span.intrinsics.duration >= 0.03 && span.intrinsics.duration <= 0.7)
 
         // Should have (most) type-specific intrinsics
-        assert.equal(span.intrinsics.component, 'TestStore')
-        assert.equal(span.intrinsics['span.kind'], 'client')
+        t.equal(span.intrinsics.component, 'TestStore')
+        t.equal(span.intrinsics['span.kind'], 'client')
 
-        assert.ok(span.attributes)
+        t.ok(span.attributes)
         const attributes = span.attributes
 
         // Should have not http properties.
         const hasOwnAttribute = Object.hasOwnProperty.bind(attributes)
-        assert.ok(!hasOwnAttribute('http.url'))
-        assert.ok(!hasOwnAttribute('http.method'))
-        assert.ok(!hasOwnAttribute('http.request.method'))
+        t.notOk(hasOwnAttribute('http.url'))
+        t.notOk(hasOwnAttribute('http.method'))
+        t.notOk(hasOwnAttribute('http.request.method'))
 
         // Should have (most) datastore properties.
-        assert.ok(attributes['db.instance'])
-        assert.equal(attributes['db.collection'], 'my-collection')
-        assert.equal(attributes['peer.hostname'], 'my-db-host')
-        assert.equal(attributes['peer.address'], 'my-db-host:/path/to/db.sock')
-        assert.equal(attributes['db.system'], 'TestStore') // same as intrinsics.component
-        assert.equal(attributes['server.address'], 'my-db-host')
-        assert.equal(attributes['server.port'], '/path/to/db.sock')
+        t.ok(attributes['db.instance'])
+        t.equal(attributes['db.collection'], 'my-collection')
+        t.equal(attributes['peer.hostname'], 'my-db-host')
+        t.equal(attributes['peer.address'], 'my-db-host:/path/to/db.sock')
+        t.equal(attributes['db.system'], 'TestStore') // same as intrinsics.component
+        t.equal(attributes['server.address'], 'my-db-host')
+        t.equal(attributes['server.port'], '/path/to/db.sock')
 
         const statement = attributes['db.statement']
-        assert.ok(statement)
+        t.ok(statement)
 
         // Testing query truncation
-        assert.ok(statement.endsWith('...'))
-        assert.equal(Buffer.byteLength(statement, 'utf8'), 2000)
+        t.ok(statement.endsWith('...'))
+        t.equal(Buffer.byteLength(statement, 'utf8'), 2000)
 
-        end()
+        t.end()
       })
     })
   })
 
-  await t.test('should serialize intrinsics to proper format with toJSON method', (t, end) => {
-    const { agent } = t.nr
+  t.test('should serialize intrinsics to proper format with toJSON method', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       transaction.priority = 42
       transaction.sampled = true
@@ -308,24 +309,23 @@ test('fromSegment()', async (t) => {
         const serializedSpan = span.toJSON()
         const [intrinsics] = serializedSpan
 
-        assert.equal(intrinsics.type, 'Span')
-        assert.equal(intrinsics.traceId, transaction.traceId)
-        assert.equal(intrinsics.guid, segment.id)
-        assert.equal(intrinsics.parentId, 'parent')
-        assert.equal(intrinsics.transactionId, transaction.id)
-        assert.equal(intrinsics.priority, 42)
-        assert.ok(intrinsics.name)
-        assert.equal(intrinsics.category, 'generic')
-        assert.ok(intrinsics.timestamp)
-        assert.ok(intrinsics.duration)
+        t.equal(intrinsics.type, 'Span')
+        t.equal(intrinsics.traceId, transaction.traceId)
+        t.equal(intrinsics.guid, segment.id)
+        t.equal(intrinsics.parentId, 'parent')
+        t.equal(intrinsics.transactionId, transaction.id)
+        t.equal(intrinsics.priority, 42)
+        t.ok(intrinsics.name)
+        t.equal(intrinsics.category, 'generic')
+        t.ok(intrinsics.timestamp)
+        t.ok(intrinsics.duration)
 
-        end()
+        t.end()
       }, 10)
     })
   })
 
-  await t.test('should populate intrinsics from span context', (t, end) => {
-    const { agent } = t.nr
+  t.test('should populate intrinsics from span context', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       transaction.priority = 42
       transaction.sampled = true
@@ -341,16 +341,15 @@ test('fromSegment()', async (t) => {
         const serializedSpan = span.toJSON()
         const [intrinsics] = serializedSpan
 
-        assert.equal(intrinsics['intrinsic.1'], 1)
-        assert.equal(intrinsics['intrinsic.2'], 2)
+        t.equal(intrinsics['intrinsic.1'], 1)
+        t.equal(intrinsics['intrinsic.2'], 2)
 
-        end()
+        t.end()
       }, 10)
     })
   })
 
-  await t.test('should handle truncated http spans', (t, end) => {
-    const { agent } = t.nr
+  t.test('should handle truncated http spans', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       https.get('https://example.com?foo=bar', (res) => {
         transaction.end() // prematurely end to truncate
@@ -358,33 +357,32 @@ test('fromSegment()', async (t) => {
         res.resume()
         res.on('end', () => {
           const segment = transaction.trace.root.children[0]
-          assert.ok(segment.name.startsWith('Truncated'))
+          t.ok(segment.name.startsWith('Truncated'))
 
           const span = SpanEvent.fromSegment(segment)
-          assert.ok(span)
-          assert.ok(span instanceof SpanEvent)
-          assert.ok(span instanceof SpanEvent.HttpSpanEvent)
+          t.ok(span)
+          t.ok(span instanceof SpanEvent)
+          t.ok(span instanceof SpanEvent.HttpSpanEvent)
 
-          end()
+          t.end()
         })
       })
     })
   })
 
-  await t.test('should handle truncated datastore spans', (t, end) => {
-    const { agent } = t.nr
+  t.test('should handle truncated datastore spans', (t) => {
     helper.runInTransaction(agent, (transaction) => {
       const segment = transaction.trace.root.add('Datastore/operation/something')
       transaction.end() // end before segment to trigger truncate
 
-      assert.ok(segment.name.startsWith('Truncated'))
+      t.ok(segment.name.startsWith('Truncated'))
 
       const span = SpanEvent.fromSegment(segment)
-      assert.ok(span)
-      assert.ok(span instanceof SpanEvent)
-      assert.ok(span instanceof SpanEvent.DatastoreSpanEvent)
+      t.ok(span)
+      t.ok(span instanceof SpanEvent)
+      t.ok(span instanceof SpanEvent.DatastoreSpanEvent)
 
-      end()
+      t.end()
     })
   })
 })

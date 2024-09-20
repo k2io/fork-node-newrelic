@@ -4,34 +4,35 @@
  */
 
 'use strict'
-const assert = require('node:assert')
-const test = require('node:test')
+const tap = require('tap')
 const { createFakeConnection, createMetricAggregator } = require('./span-streamer-helpers')
 const BaseSpanStreamer = require('../../../lib/spans/base-span-streamer')
 
-test('SpanStreamer', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
+tap.test('SpanStreamer', (t) => {
+  t.autoend()
+  let spanStreamer
+
+  t.beforeEach(() => {
     const fakeConnection = createFakeConnection()
 
-    ctx.nr.spanStreamer = new BaseSpanStreamer(
+    spanStreamer = new BaseSpanStreamer(
       'fake-license-key',
       fakeConnection,
       createMetricAggregator(),
       2
     )
   })
-
-  for (const method of ['addToQueue', 'sendQueue']) {
-    await t.test(`should throw error when ${method} is called`, (t) => {
-      const { spanStreamer } = t.nr
-      assert.throws(
+  ;['addToQueue', 'sendQueue'].forEach((method) => {
+    t.test(`should throw error when ${method} is called`, (t) => {
+      t.throws(
         () => {
           spanStreamer[method]()
         },
         Error,
         `${method} is not implemented`
       )
+
+      t.end()
     })
-  }
+  })
 })
