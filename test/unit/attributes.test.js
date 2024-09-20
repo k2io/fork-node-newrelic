@@ -1,14 +1,12 @@
 /*
- * Copyright 2024 New Relic Corporation. All rights reserved.
+ * Copyright 2020 New Relic Corporation. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 'use strict'
 
-const test = require('node:test')
-const assert = require('node:assert')
+const tap = require('tap')
 
-const { match } = require('../lib/custom-assertions')
 const helper = require('../lib/agent_helper')
 const { Attributes } = require('../../lib/attributes')
 const AttributeFilter = require('../../lib/config/attribute-filter')
@@ -16,16 +14,30 @@ const AttributeFilter = require('../../lib/config/attribute-filter')
 const DESTINATIONS = AttributeFilter.DESTINATIONS
 const TRANSACTION_SCOPE = 'transaction'
 
-test('#addAttribute', async (t) => {
-  await t.test('adds an attribute to instance', () => {
+tap.test('#addAttribute', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent()
+  })
+
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+  })
+
+  t.test('adds an attribute to instance', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE)
     inst.addAttribute(DESTINATIONS.TRANS_SCOPE, 'test', 'success')
     const attributes = inst.get(DESTINATIONS.TRANS_SCOPE)
 
-    assert.equal(attributes.test, 'success')
+    t.equal(attributes.test, 'success')
+
+    t.end()
   })
 
-  await t.test('does not add attribute if key length limit is exceeded', () => {
+  t.test('does not add attribute if key length limit is exceeded', (t) => {
     const tooLong = [
       'Lorem ipsum dolor sit amet, consectetur adipiscing elit.',
       'Cras id lacinia erat. Suspendisse mi nisl, sodales vel est eu,',
@@ -37,21 +49,37 @@ test('#addAttribute', async (t) => {
     inst.addAttribute(DESTINATIONS.TRANS_SCOPE, tooLong, 'will fail')
     const attributes = Object.keys(inst.attributes)
 
-    assert.equal(attributes.length, 0)
+    t.equal(attributes.length, 0)
+
+    t.end()
   })
 })
 
-test('#addAttributes', async (t) => {
-  await t.test('adds multiple attributes to instance', () => {
+tap.test('#addAttributes', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent()
+  })
+
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+  })
+
+  t.test('adds multiple attributes to instance', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE)
     inst.addAttributes(DESTINATIONS.TRANS_SCOPE, { one: '1', two: '2' })
     const attributes = inst.get(DESTINATIONS.TRANS_SCOPE)
 
-    assert.equal(attributes.one, '1')
-    assert.equal(attributes.two, '2')
+    t.equal(attributes.one, '1')
+    t.equal(attributes.two, '2')
+
+    t.end()
   })
 
-  await t.test('only allows non-null-type primitive attribute values', () => {
+  t.test('only allows non-null-type primitive attribute values', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE, 10)
     const attributes = {
       first: 'first',
@@ -68,18 +96,20 @@ test('#addAttributes', async (t) => {
     inst.addAttributes(DESTINATIONS.TRANS_SCOPE, attributes)
 
     const res = inst.get(DESTINATIONS.TRANS_SCOPE)
-    assert.equal(Object.keys(res).length, 3)
+    t.equal(Object.keys(res).length, 3)
 
     const hasAttribute = Object.hasOwnProperty.bind(res)
-    assert.equal(hasAttribute('second'), false)
-    assert.equal(hasAttribute('third'), false)
-    assert.equal(hasAttribute('sixth'), false)
-    assert.equal(hasAttribute('seventh'), false)
-    assert.equal(hasAttribute('eighth'), false)
-    assert.equal(hasAttribute('ninth'), false)
+    t.notOk(hasAttribute('second'))
+    t.notOk(hasAttribute('third'))
+    t.notOk(hasAttribute('sixth'))
+    t.notOk(hasAttribute('seventh'))
+    t.notOk(hasAttribute('eighth'))
+    t.notOk(hasAttribute('ninth'))
+
+    t.end()
   })
 
-  await t.test('disallows adding more than maximum allowed attributes', () => {
+  t.test('disallows adding more than maximum allowed attributes', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE, 3)
     const attributes = {
       first: 1,
@@ -91,23 +121,39 @@ test('#addAttributes', async (t) => {
     inst.addAttributes(DESTINATIONS.TRANS_SCOPE, attributes)
     const res = inst.get(DESTINATIONS.TRANS_SCOPE)
 
-    assert.equal(Object.keys(res).length, 3)
+    t.equal(Object.keys(res).length, 3)
+
+    t.end()
   })
 
-  await t.test('Overwrites value of added attribute with same key', () => {
+  t.test('Overwrites value of added attribute with same key', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE, 2)
     inst.addAttribute(0x01, 'Roboto', 1)
     inst.addAttribute(0x01, 'Roboto', 99)
 
     const res = inst.get(0x01)
 
-    assert.equal(Object.keys(res).length, 1)
-    assert.equal(res.Roboto, 99)
+    t.equal(Object.keys(res).length, 1)
+    t.equal(res.Roboto, 99)
+
+    t.end()
   })
 })
 
-test('#get', async (t) => {
-  await t.test('gets attributes by destination, truncating values if necessary', () => {
+tap.test('#get', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent()
+  })
+
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+  })
+
+  t.test('gets attributes by destination, truncating values if necessary', (t) => {
     const longVal = [
       'Lorem ipsum dolor sit amet, consectetur adipiscing elit.',
       'Cras id lacinia erat. Suspendisse mi nisl, sodales vel est eu,',
@@ -121,15 +167,17 @@ test('#get', async (t) => {
     inst.addAttribute(0x01, 'tooLong', longVal)
     inst.addAttribute(0x08, 'wrongDest', 'hello')
 
-    assert.ok(Buffer.byteLength(longVal) > 255)
+    t.ok(Buffer.byteLength(longVal) > 255)
 
     const res = inst.get(0x01)
-    assert.equal(res.valid, 50)
+    t.equal(res.valid, 50)
 
-    assert.equal(Buffer.byteLength(res.tooLong), 255)
+    t.equal(Buffer.byteLength(res.tooLong), 255)
+
+    t.end()
   })
 
-  await t.test('only returns attributes up to specified limit', () => {
+  t.test('only returns attributes up to specified limit', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE, 2)
     inst.addAttribute(0x01, 'first', 'first')
     inst.addAttribute(0x01, 'second', 'second')
@@ -138,38 +186,44 @@ test('#get', async (t) => {
     const res = inst.get(0x01)
     const hasAttribute = Object.hasOwnProperty.bind(res)
 
-    assert.equal(Object.keys(res).length, 2)
-    assert.equal(hasAttribute('third'), false)
+    t.equal(Object.keys(res).length, 2)
+    t.notOk(hasAttribute('third'))
+
+    t.end()
   })
 })
 
-test('#hasValidDestination', async (t) => {
-  t.beforeEach((ctx) => {
-    ctx.nr = {}
-    ctx.nr.agent = helper.loadMockedAgent()
+tap.test('#hasValidDestination', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent()
   })
 
-  t.afterEach((ctx) => {
-    helper.unloadAgent(ctx.nr.agent)
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
   })
 
-  await t.test('should return true if single destination valid', () => {
+  t.test('should return true if single destination valid', (t) => {
     const attributes = new Attributes(TRANSACTION_SCOPE)
     const hasDestination = attributes.hasValidDestination(DESTINATIONS.TRANS_EVENT, 'testAttr')
 
-    assert.equal(hasDestination, true)
+    t.equal(hasDestination, true)
+    t.end()
   })
 
-  await t.test('should return true if all destinations valid', () => {
+  t.test('should return true if all destinations valid', (t) => {
     const attributes = new Attributes(TRANSACTION_SCOPE)
     const destinations = DESTINATIONS.TRANS_EVENT | DESTINATIONS.TRANS_TRACE
     const hasDestination = attributes.hasValidDestination(destinations, 'testAttr')
 
-    assert.equal(hasDestination, true)
+    t.equal(hasDestination, true)
+    t.end()
   })
 
-  await t.test('should return true if only one destination valid', (t) => {
-    const { agent } = t.nr
+  t.test('should return true if only one destination valid', (t) => {
     const attributeName = 'testAttr'
     agent.config.transaction_events.attributes.exclude = [attributeName]
     agent.config.emit('transaction_events.attributes.exclude')
@@ -178,11 +232,11 @@ test('#hasValidDestination', async (t) => {
     const destinations = DESTINATIONS.TRANS_EVENT | DESTINATIONS.TRANS_TRACE
     const hasDestination = attributes.hasValidDestination(destinations, attributeName)
 
-    assert.equal(hasDestination, true)
+    t.equal(hasDestination, true)
+    t.end()
   })
 
-  await t.test('should return false if no valid destinations', (t) => {
-    const { agent } = t.nr
+  t.test('should return false if no valid destinations', (t) => {
     const attributeName = 'testAttr'
     agent.config.attributes.exclude = [attributeName]
     agent.config.emit('attributes.exclude')
@@ -191,12 +245,25 @@ test('#hasValidDestination', async (t) => {
     const destinations = DESTINATIONS.TRANS_EVENT | DESTINATIONS.TRANS_TRACE
     const hasDestination = attributes.hasValidDestination(destinations, attributeName)
 
-    assert.equal(hasDestination, false)
+    t.equal(hasDestination, false)
+    t.end()
   })
 })
 
-test('#reset', async (t) => {
-  await t.test('resets instance attributes', () => {
+tap.test('#reset', (t) => {
+  t.autoend()
+
+  let agent = null
+
+  t.beforeEach(() => {
+    agent = helper.loadMockedAgent()
+  })
+
+  t.afterEach(() => {
+    helper.unloadAgent(agent)
+  })
+
+  t.test('resets instance attributes', (t) => {
     const inst = new Attributes(TRANSACTION_SCOPE)
     inst.addAttribute(0x01, 'first', 'first')
     inst.addAttribute(0x01, 'second', 'second')
@@ -204,6 +271,8 @@ test('#reset', async (t) => {
 
     inst.reset()
 
-    assert.equal(match(inst.attributes, {}), true)
+    t.same(inst.attributes, {})
+
+    t.end()
   })
 })
