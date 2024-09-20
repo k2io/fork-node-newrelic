@@ -45,7 +45,7 @@ module.exports = (pkg) => {
     }
 
     function tearDown(t) {
-      t.context?.server?.close()
+      t.context.server.close()
       helper.unloadAgent(t.context.agent)
     }
 
@@ -148,22 +148,18 @@ module.exports = (pkg) => {
 
       t.test('should name and produce segments for matched wildcard path', (t) => {
         const { agent, router, app } = t.context
-        let path = '(.*)'
-        if (semver.gte(pkgVersion, '13.0.1')) {
-          path = '{*any}'
-        }
-        router.get(`/:first/${path}`, function firstMiddleware(ctx) {
+        router.get('/:first/(.*)', function firstMiddleware(ctx) {
           ctx.body = 'first'
         })
         app.use(router.routes())
         agent.on('transactionFinished', (tx) => {
           t.assertSegments(tx.trace.root, [
-            `WebTransaction/WebFrameworkUri/Koa/GET//:first/${path}`,
-            ['Koa/Router: /', [`Nodejs/Middleware/Koa/firstMiddleware//:first/${path}`]]
+            'WebTransaction/WebFrameworkUri/Koa/GET//:first/(.*)',
+            ['Koa/Router: /', ['Nodejs/Middleware/Koa/firstMiddleware//:first/(.*)']]
           ])
           t.equal(
             tx.name,
-            `WebTransaction/WebFrameworkUri/Koa/GET//:first/${path}`,
+            'WebTransaction/WebFrameworkUri/Koa/GET//:first/(.*)',
             'transaction should be named after the matched regex path'
           )
           t.end()
@@ -346,21 +342,20 @@ module.exports = (pkg) => {
         router.get('/:second', function terminalMiddleware(ctx) {
           ctx.body = ' second'
         })
-
-        const segmentTree = semver.gte(pkgVersion, '13.0.1')
-          ? ['Nodejs/Middleware/Koa/terminalMiddleware//:second']
-          : [
-              'Nodejs/Middleware/Koa/secondMiddleware//:first',
-              [
-                'Nodejs/Middleware/Koa/secondMiddleware//:second',
-                ['Nodejs/Middleware/Koa/terminalMiddleware//:second']
-              ]
-            ]
         app.use(router.routes())
         agent.on('transactionFinished', (tx) => {
           t.assertSegments(tx.trace.root, [
             'WebTransaction/WebFrameworkUri/Koa/GET//:second',
-            ['Koa/Router: /', segmentTree]
+            [
+              'Koa/Router: /',
+              [
+                'Nodejs/Middleware/Koa/secondMiddleware//:first',
+                [
+                  'Nodejs/Middleware/Koa/secondMiddleware//:second',
+                  ['Nodejs/Middleware/Koa/terminalMiddleware//:second']
+                ]
+              ]
+            ]
           ])
           t.equal(
             tx.name,
