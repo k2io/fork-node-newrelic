@@ -129,7 +129,7 @@ test('send', async (t) => {
     baseAggregator._toPayloadSync = () => null
     baseAggregator.clear = () => {}
 
-    const expectedStartEmit = `starting_data_send-${METHOD}`
+    const expectedStartEmit = `starting ${METHOD} data send.`
     let emitFired = false
     baseAggregator.once(expectedStartEmit, () => {
       emitFired = true
@@ -274,7 +274,7 @@ test('send', async (t) => {
     baseAggregator._getMergeData = () => ['data']
     baseAggregator._toPayloadSync = () => ['data']
 
-    const expectedStartEmit = `finished_data_send-${METHOD}`
+    const expectedStartEmit = `finished ${METHOD} data send.`
     let emitFired = false
     baseAggregator.once(expectedStartEmit, () => {
       emitFired = true
